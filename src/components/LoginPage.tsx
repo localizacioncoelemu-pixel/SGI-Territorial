@@ -1,28 +1,24 @@
 import React, { useState } from 'react';
 import { 
-  ShieldAlert, 
   LogIn, 
   Mail, 
   Lock, 
   AlertCircle, 
-  Sparkles, 
-  ShieldCheck, 
   Smartphone, 
   Download, 
   Eye,
   EyeOff,
   Building2,
-  CheckCircle2,
-  KeyRound
+  CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { MunicipalLogo } from './MunicipalLogo';
 import { InstallPwaModal } from './InstallPwaModal';
 
 export const LoginPage: React.FC = () => {
-  const { loginWithEmail, loginDemo } = useAuth();
+  const { loginWithEmail } = useAuth();
   
-  const [email, setEmail] = useState('localizacioncoelemu@gmail.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,19 +35,15 @@ export const LoginPage: React.FC = () => {
     } catch (err: any) {
       console.error('Login error:', err);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
-        setError('Credenciales inválidas. Comprueba tu correo y contraseña, o utiliza el Acceso Rápido abajo.');
+        setError('Credenciales inválidas. Compruebe su correo y contraseña asignada.');
       } else if (err.code === 'auth/too-many-requests') {
-        setError('Demasiados intentos fallidos. Intenta más tarde o utiliza Acceso Rápido.');
+        setError('Demasiados intentos fallidos. Intente nuevamente en unos minutos.');
       } else {
-        setError(err.message || 'Error al iniciar sesión. Puedes acceder con el botón directo de Administrador.');
+        setError(err.message || 'Error al iniciar sesión. Verifique sus credenciales de acceso.');
       }
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDemo = (role: 'admin' | 'usuario') => {
-    loginDemo(role);
   };
 
   return (
@@ -68,7 +60,7 @@ export const LoginPage: React.FC = () => {
               SIG Territorial Municipal
             </span>
             <span className="text-[11px] text-slate-400 font-mono">
-              Comuna de Coelemu • Plataforma Oficial
+              Comuna de Coelemu
             </span>
           </div>
         </div>
@@ -167,49 +159,8 @@ export const LoginPage: React.FC = () => {
               </button>
             </form>
 
-            {/* Quick Access Section */}
-            <div className="pt-4 border-t border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5 text-slate-400" />
-                  Acceso Rápido / Demostración:
-                </span>
-                <span className="text-[10px] text-slate-500">Sin clave</span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleDemo('admin')}
-                  className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl text-left transition-all active:scale-98 cursor-pointer group"
-                >
-                  <div className="flex items-center gap-1.5 text-white font-bold text-xs mb-0.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-slate-300" />
-                    <span>Admin SIG</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 block leading-tight">
-                    Acceso total (KMZ, usuarios, capas)
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDemo('usuario')}
-                  className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl text-left transition-all active:scale-98 cursor-pointer group"
-                >
-                  <div className="flex items-center gap-1.5 text-slate-200 font-bold text-xs mb-0.5">
-                    <Smartphone className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Lector / Campo</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 block leading-tight">
-                    Visualización de capas y terreno
-                  </span>
-                </button>
-              </div>
-            </div>
-
             {/* Install App / Download Shortcut Link */}
-            <div className="pt-1">
+            <div className="pt-2">
               <button
                 type="button"
                 onClick={() => setInstallModalOpen(true)}

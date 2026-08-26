@@ -228,7 +228,7 @@ export const ThreatFilters: React.FC = () => {
             })}
           </div>
 
-          {/* Sector Multi-Select Quick Button */}
+            {/* Sector Multi-Select Quick Button */}
           <div className="relative">
             <button
               id="btn-filter-sectores-dropdown"
@@ -250,42 +250,73 @@ export const ThreatFilters: React.FC = () => {
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
-            {/* Sectors Dropdown Menu */}
+            {/* Sectors Dropdown / Modal for Mobile and Desktop */}
             {showSectorsList && (
               <>
                 <div 
-                  className="fixed inset-0 z-40 bg-transparent" 
+                  className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-xs sm:bg-transparent" 
                   onClick={() => setShowSectorsList(false)} 
                 />
                 <div 
                   id="dropdown-sectores-panel"
-                  className="absolute right-0 sm:left-0 sm:right-auto mt-2 w-80 max-w-[90vw] bg-white rounded-2xl shadow-2xl border border-slate-200 p-3.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-150"
+                  className="fixed inset-x-3 top-20 sm:top-full sm:absolute sm:inset-auto sm:left-0 sm:mt-2 w-auto sm:w-84 max-w-sm mx-auto sm:mx-0 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 text-xs animate-in fade-in zoom-in-95 duration-150"
                 >
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100">
                     <div>
-                      <h5 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
-                        <Home className="w-3.5 h-3.5 text-indigo-600" />
-                        Sectores con Capas KMZ
+                      <h5 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs sm:text-sm">
+                        <Home className="w-4 h-4 text-indigo-600" />
+                        Sectores Territoriales ({availableSectors.length})
                       </h5>
-                      <p className="text-[10px] text-slate-500 leading-tight">
-                        Filtra y enfoca el mapa por sector territorial
+                      <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                        Selecciona uno o varios sectores para filtrar
                       </p>
                     </div>
                     <button
                       onClick={() => setShowSectorsList(false)}
-                      className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer rounded-lg hover:bg-slate-100"
+                      className="text-slate-400 hover:text-slate-700 p-1.5 cursor-pointer rounded-xl hover:bg-slate-100 transition-colors"
+                      title="Cerrar"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <div className="max-h-60 overflow-y-auto space-y-1 pr-1">
+                  {/* Actions Header: Select All / Clear */}
+                  {availableSectors.length > 1 && (
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allSelected = availableSectors.every(s => filterState.selectedSectors.includes(s));
+                          setFilterState(prev => ({
+                            ...prev,
+                            selectedSectors: allSelected ? [] : [...availableSectors]
+                          }));
+                        }}
+                        className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                      >
+                        {availableSectors.every(s => filterState.selectedSectors.includes(s))
+                          ? 'Deseleccionar todos'
+                          : 'Seleccionar todos'}
+                      </button>
+                      {filterState.selectedSectors.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setFilterState(prev => ({ ...prev, selectedSectors: [] }))}
+                          className="text-red-600 hover:text-red-700 font-medium cursor-pointer"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="max-h-64 sm:max-h-60 overflow-y-auto space-y-1.5 pr-1">
                     {availableSectors.length === 0 ? (
-                      <div className="text-center py-5 px-2 text-slate-400">
-                        <Home className="w-6 h-6 mx-auto mb-1.5 opacity-40 text-slate-400" />
-                        <p className="font-semibold text-slate-600 text-xs">Sin sectores registrados</p>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          Carga un archivo KMZ o agrega puntos para ver sectores.
+                      <div className="text-center py-6 px-2 text-slate-400">
+                        <Home className="w-7 h-7 mx-auto mb-2 opacity-40 text-slate-400" />
+                        <p className="font-semibold text-slate-700 text-xs">Sin sectores registrados</p>
+                        <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                          Carga un archivo KMZ con sectores o registra puntos en el mapa.
                         </p>
                       </div>
                     ) : (
@@ -295,14 +326,18 @@ export const ThreatFilters: React.FC = () => {
                           <button
                             key={sec}
                             onClick={() => toggleSector(sec)}
-                            className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between transition-all cursor-pointer ${
+                            className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center justify-between transition-all cursor-pointer ${
                               isSelected
-                                ? 'bg-indigo-50 text-indigo-900 font-bold border border-indigo-200'
-                                : 'text-slate-700 hover:bg-slate-50 border border-transparent'
+                                ? 'bg-indigo-50 text-indigo-900 font-bold border border-indigo-200 shadow-xs'
+                                : 'text-slate-700 hover:bg-slate-50 border border-slate-100'
                             }`}
                           >
-                            <span className="truncate">{sec}</span>
-                            {isSelected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                            <span className="truncate pr-2 font-medium">{sec}</span>
+                            <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+                              isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-300 bg-white'
+                            }`}>
+                              {isSelected && <Check className="w-3.5 h-3.5" />}
+                            </div>
                           </button>
                         );
                       })
@@ -310,15 +345,15 @@ export const ThreatFilters: React.FC = () => {
                   </div>
 
                   {filterState.selectedSectors.length > 0 && (
-                    <div className="pt-2.5 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                      <span className="text-indigo-700 font-bold">
-                        {filterState.selectedSectors.length} sector(es) seleccionados
+                    <div className="pt-3 mt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-indigo-800 font-bold">
+                        {filterState.selectedSectors.length} sector(es) activos
                       </span>
                       <button
-                        onClick={() => setFilterState(prev => ({ ...prev, selectedSectors: [] }))}
-                        className="text-red-600 hover:text-red-700 font-bold hover:underline cursor-pointer"
+                        onClick={() => setShowSectorsList(false)}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold cursor-pointer transition-colors text-xs"
                       >
-                        Limpiar selección
+                        Aplicar Filtro
                       </button>
                     </div>
                   )}
