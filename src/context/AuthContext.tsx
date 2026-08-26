@@ -52,6 +52,18 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Helper to sanitize objects for Firestore (removes undefined values that crash setDoc)
+function sanitizeForFirestore<T extends Record<string, any>>(data: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const key of Object.keys(data)) {
+    const val = data[key];
+    if (val !== undefined) {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 export const ADMIN_EMAIL = 'localizacioncoelemu@gmail.com';
 
 /**
@@ -107,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [allUsers, setAllUsers] = useState<UserProfile[]>(INITIAL_USERS);
 
-  // Helper to fetch user by email from Firestore with fallback checks
+  // Helper to fetch user by email from Firestore with thorough fallback checks
   const findUserInFirestoreByEmail = async (email: string): Promise<{ docId: string; data: UserProfile } | null> => {
     const cleanEmail = email.trim().toLowerCase();
     const docId = getUserDocId(cleanEmail);
@@ -116,19 +128,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 1. Direct doc lookup by canonical ID
       const directSnap = await getDoc(doc(db, 'users', docId));
       if (directSnap.exists()) {
-        return { docId: directSnap.id, data: directSnap.data() as UserProfile };
+        const d = directSnap.data() as UserProfile;
+        return { docId: directSnap.id, data: { ...d, uid: directSnap.id, email: d.email || cleanEmail } };
       }
 
-      // 2. Query by email field
+      // 2. Query by email field (case-sensitive or lowercase)
       const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
       const qSnap = await getDocs(q);
       if (!qSnap.empty) {
         const firstDoc = qSnap.docs[0];
-        return { docId: firstDoc.id, data: firstDoc.data() as UserProfile };
+        const d = firstDoc.data() as UserProfile;
+        return { docId: firstDoc.id, data: { ...d, uid: firstDoc.id, email: d.email || cleanEmail } };
+      }
+
+      // 3. Fallback: get all docs and match case-insensitively
+      const allDocsSnap = await getDocs(collection(db, 'users'));
+      if (!allDocsSnap.empty) {
+        for (const docItem of allDocsSnap.docs) {
+          const d = docItem.data() as UserProfile;
+          if (d.email && d.email.trim().toLowerCase() === cleanEmail) {
+            return { docId: docItem.id, data: { ...d, uid: docItem.id, email: cleanEmail } };
+          }
+        }
       }
     } catch (err) {
       console.warn('Firestore findUserInFirestoreByEmail error:', err);
     }
+
+    // 4. In-memory state check
+    const localMatch = allUsers.find(u => u.email?.trim().toLowerCase() === cleanEmail);
+    if (localMatch) {
+      return { docId: localMatch.uid || docId, data: localMatch };
+    }
+
     return null;
   };
 
@@ -309,7 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Ingrese su contraseña.');
     }
 
-    // 1. First, search for user in Firestore (enables instant cross-device login for all manager-registered users)
+    // 1. Search for user in Firestore / in-memory cache
     const firestoreUserRecord = await findUserInFirestoreByEmail(cleanEmail);
 
     if (firestoreUserRecord) {
@@ -337,14 +369,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           lastLogin: Date.now(),
         };
 
-        // Update last login in Firestore
+        // Update last login in Firestore with sanitized data
         try {
-          await setDoc(doc(db, 'users', canonicalId), activeProfile, { merge: true });
+          await setDoc(doc(db, 'users', canonicalId), sanitizeForFirestore(activeProfile), { merge: true });
         } catch (e) {
           console.warn('Firestore update lastLogin note:', e);
         }
 
-        // Try logging in with Firebase Auth in the background
+        // Try logging in with Firebase Auth in the background (non-blocking)
         try {
           await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
         } catch (authErr: any) {
@@ -381,7 +413,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lastLogin: Date.now(),
       };
       try {
-        await setDoc(doc(db, 'users', getUserDocId(ADMIN_EMAIL)), defaultAdmin, { merge: true });
+        await setDoc(doc(db, 'users', getUserDocId(ADMIN_EMAIL)), sanitizeForFirestore(defaultAdmin), { merge: true });
         if (cleanPass.length >= 6) {
           await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass).catch(() => {});
         }
@@ -398,7 +430,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
     } catch (fbErr: any) {
       console.warn('Firebase Auth direct login failed:', fbErr?.code);
-      throw new Error('Usuario o contraseña no válidos. Verifique con el Administrador si su cuenta está registrada.');
+      throw new Error('Usuario o contraseña no válidos. Verifique si el Administrador ha registrado su cuenta.');
     }
   };
 
@@ -425,7 +457,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lastLogin: Date.now(),
     };
 
-    await setDoc(doc(db, 'users', canonicalId), newProfile, { merge: true });
+    await setDoc(doc(db, 'users', canonicalId), sanitizeForFirestore(newProfile), { merge: true });
     setUser(newProfile);
     localStorage.setItem('sig_active_user', JSON.stringify(newProfile));
   };
@@ -468,7 +500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const pass = userData.password?.trim() || 'Coelemu2026';
     const canonicalId = getUserDocId(cleanEmail);
 
-    // 1. Create account in Firebase Auth using isolated secondary instance
+    // 1. Create account in Firebase Auth using isolated secondary instance (non-blocking)
     if (pass && pass.length >= 6) {
       createFirebaseAuthUser(cleanEmail, pass).catch((err) => {
         console.warn('Background createFirebaseAuthUser note:', err);
@@ -479,13 +511,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       uid: canonicalId,
       email: cleanEmail,
       displayName: userData.displayName.trim(),
-      role: userData.role,
-      department: userData.department?.trim() || 'Gestión Comunal',
+      role: userData.role || 'usuario',
+      department: userData.department?.trim() || 'Gestión Territorial',
       phone: userData.phone?.trim() || '',
       status: userData.status || 'active',
       passwordHint: pass,
       createdAt: Date.now(),
-      lastLogin: undefined,
     };
 
     // Update local state immediately
@@ -494,19 +525,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return [newProfile, ...filtered];
     });
 
-    // Save permanently to Firestore with merge to prevent accidental overwriting
+    // Save permanently to Firestore with sanitized payload (never passes undefined)
     try {
-      await setDoc(doc(db, 'users', canonicalId), newProfile, { merge: true });
-    } catch (e) {
-      console.warn('Firestore createUser note:', e);
-      throw new Error('Error al sincronizar el usuario en Firebase Firestore.');
+      const cleanData = sanitizeForFirestore(newProfile);
+      await setDoc(doc(db, 'users', canonicalId), cleanData, { merge: true });
+    } catch (e: any) {
+      console.error('Firestore createUser error:', e);
+      // Even if Firestore network fails, don't crash - warn and log
+      throw new Error(`Error al guardar en base de datos: ${e?.message || 'Error de conexión'}`);
     }
 
     return canonicalId;
   };
 
   const updateUser = async (uid: string, updates: Partial<UserProfile>) => {
-    const cleanUpdates = { ...updates };
+    const cleanUpdates = sanitizeForFirestore(updates);
     
     // Find target user in state
     const targetUser = allUsers.find(u => u.uid === uid || getUserDocId(u.email) === uid);

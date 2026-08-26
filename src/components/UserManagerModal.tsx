@@ -39,6 +39,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Create / Edit modal state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -133,6 +134,8 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+
     if (!formData.displayName.trim() || !formData.email.trim()) {
       showNotification('Nombre y correo electrónico son obligatorios.', 'error');
       return;
@@ -143,6 +146,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
       return;
     }
 
+    setIsSaving(true);
     try {
       if (editingUser) {
         // Update existing user
@@ -159,12 +163,15 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
       } else {
         // Create new user
         await createUser(formData);
-        showNotification(`Nuevo usuario "${formData.displayName}" registrado en Firestore con acceso desde cualquier dispositivo.`);
+        showNotification(`Nuevo usuario "${formData.displayName}" guardado con éxito en Firestore. Ya puede ingresar desde cualquier celular o PC.`);
       }
       setIsFormOpen(false);
       setEditingUser(null);
+      refreshUsers().catch(() => {});
     } catch (err: any) {
       showNotification(err.message || 'Error al guardar el usuario en Firebase', 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -591,17 +598,28 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer transition-colors"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded-xl font-bold cursor-pointer transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold cursor-pointer transition-colors shadow-xs"
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl font-bold cursor-pointer transition-colors shadow-xs"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>{editingUser ? 'Guardar Cambios' : 'Registrar Funcionario'}</span>
+                  {isSaving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                      <span>Guardando en Firestore...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>{editingUser ? 'Guardar Cambios' : 'Registrar Funcionario'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
