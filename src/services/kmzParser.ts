@@ -199,9 +199,11 @@ export function processGeoJsonData(
       styleFillOpacity = Number(props['fill-opacity']);
     }
 
+    const cleanGeometry = cleanAndOptimizeGeometry(feat.geometry);
+
     return {
       type: 'Feature',
-      geometry: feat.geometry || { type: 'GeometryCollection', geometries: [] },
+      geometry: cleanGeometry || { type: 'GeometryCollection', geometries: [] },
       properties: {
         name: featName,
         description: featDesc || 'Sin descripción',
@@ -249,6 +251,34 @@ export function processGeoJsonData(
 
   // Ensure no undefined values exist in the object
   return sanitizeForFirestore(rawLayer);
+}
+
+/**
+ * Traverse GeoJSON coordinates recursively and optimize floating point decimals
+ */
+function roundCoordinates(coords: any): any {
+  if (!coords) return coords;
+  if (Array.isArray(coords) && typeof coords[0] === 'number') {
+    return coords.map((c, i) => (i < 2 ? Number(Number(c).toFixed(6)) : (typeof c === 'number' ? Math.round(c) : c)));
+  }
+  if (Array.isArray(coords)) {
+    return coords.map(sub => roundCoordinates(sub));
+  }
+  return coords;
+}
+
+export function cleanAndOptimizeGeometry(geom: any): any {
+  if (!geom) return { type: 'GeometryCollection', geometries: [] };
+  if (geom.type === 'GeometryCollection' && Array.isArray(geom.geometries)) {
+    return {
+      type: 'GeometryCollection',
+      geometries: geom.geometries.map((g: any) => cleanAndOptimizeGeometry(g)),
+    };
+  }
+  return {
+    ...geom,
+    coordinates: roundCoordinates(geom.coordinates),
+  };
 }
 
 /**

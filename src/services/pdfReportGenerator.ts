@@ -6,7 +6,8 @@ import { getThreatLevelBadge } from './kmzParser';
 export function generateTechnicalReportPdf(
   riskPoints: RiskPoint[],
   layers: KmzLayer[],
-  currentUser: UserProfile | null
+  currentUser: UserProfile | null,
+  selectedSectors?: string[]
 ) {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -21,20 +22,32 @@ export function generateTechnicalReportPdf(
     day: 'numeric',
   });
 
+  const isSectorFiltered = selectedSectors && selectedSectors.length > 0;
+  const sectorLabel = isSectorFiltered
+    ? `Sectores seleccionados (${selectedSectors.length}): ${selectedSectors.join(', ')}`
+    : 'Todos los Sectores';
+
   // Header Banner Background
   doc.setFillColor(6, 78, 59); // Emerald 900
-  doc.rect(0, 0, 210, 28, 'F');
+  doc.rect(0, 0, 210, 30, 'F');
 
   // Title Text
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('INFORME TÉCNICO TERRITORIAL & ANÁLISIS SIG', 14, 12);
+  doc.setFontSize(15);
+  doc.text('INFORME TÉCNICO TERRITORIAL & ANÁLISIS SIG', 14, 11);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text('Sistema de Información Geográfica y Registro de Terreno - Gestión de Amenazas', 14, 18);
-  doc.text(`Fecha de Emisión: ${currentDate} | Generado por: ${currentUser?.displayName || 'Especialista SIG'}`, 14, 23);
+  doc.setFontSize(8.5);
+  doc.text('Sistema de Información Geográfica y Registro de Terreno - Gestión de Amenazas', 14, 16);
+  doc.text(`Fecha de Emisión: ${currentDate} | Generado por: ${currentUser?.displayName || 'Especialista SIG'}`, 14, 21);
+  
+  // Sector filter line
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(167, 243, 208); // Emerald 200
+  doc.setFontSize(8.5);
+  const truncatedSectorLabel = sectorLabel.length > 95 ? sectorLabel.slice(0, 92) + '...' : sectorLabel;
+  doc.text(`Filtro Territorial: ${truncatedSectorLabel}`, 14, 26);
 
   // Summary Metrics Cards
   const criticalCount = riskPoints.filter(p => p.riskLevel === 'critico').length;
@@ -42,7 +55,7 @@ export function generateTechnicalReportPdf(
   const mediumCount = riskPoints.filter(p => p.riskLevel === 'medio').length;
   const pmrTotal = riskPoints.reduce((acc, p) => acc + (p.hasPmr ? (p.pmrCount || 1) : 0), 0);
 
-  let startY = 34;
+  let startY = 36;
 
   // Metric Boxes
   doc.setFillColor(254, 242, 242); // Red light

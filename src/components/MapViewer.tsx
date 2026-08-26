@@ -300,7 +300,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     // Add or update markers
     filteredRiskPoints.forEach((point) => {
       let marker = riskMarkersRef.current.get(point.id);
-      const icon = createRiskPointIcon(point, filterState.activeSpecificCategory);
+      const icon = createRiskPointIcon(point, filterState.activeSpecificCategory, filterState.filterPmrOnly);
 
       if (!marker) {
         marker = L.marker([point.coordinates.lat, point.coordinates.lng], { icon });
@@ -330,14 +330,19 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       const isLandActive = activeCat === 'remocion_masa';
       const isIsoActive = activeCat === 'rutas_evacuacion';
       const isWaterActive = activeCat === 'deficit_hidrico';
+      const isPmrActive = activeCat === 'pmr' || filterState.filterPmrOnly;
+      const hasPmr = Boolean(point.hasPmr || (point.pmrCount && point.pmrCount > 0));
 
       const popupHtml = `
-        <div class="p-3 max-w-[310px] text-xs font-sans">
+        <div class="p-3 max-w-[320px] text-xs font-sans">
           <div class="flex items-start justify-between gap-2 mb-1.5">
             <h4 class="font-bold text-slate-900 text-sm leading-tight">${escapeHtml(point.title)}</h4>
-            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${globalBadge.bg} border flex-shrink-0">
-              ${globalBadge.label}
-            </span>
+            <div class="flex items-center gap-1 flex-shrink-0">
+              ${hasPmr ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-700 text-white border border-purple-800 flex items-center gap-0.5 shadow-2xs">♿ PMR</span>` : ''}
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold ${globalBadge.bg} border">
+                ${globalBadge.label}
+              </span>
+            </div>
           </div>
           
           <div class="flex items-center gap-1.5 text-[11px] text-slate-600 mb-2 font-semibold">
@@ -349,7 +354,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           <div class="bg-slate-50 p-2 rounded-lg border border-slate-200 mb-2 space-y-1 text-[10px]">
             <div class="font-bold text-slate-700 border-b border-slate-200 pb-1 mb-1 flex items-center justify-between">
               <span>Evaluación de Riesgos:</span>
-              ${activeCat ? `<span class="text-emerald-700 text-[9px] font-semibold">Filtro: ${getCategoryLabel(activeCat)}</span>` : ''}
+              ${activeCat ? `<span class="text-emerald-700 text-[9px] font-semibold">Filtro: ${activeCat === 'pmr' ? 'PMR (Movilidad Reducida)' : getCategoryLabel(activeCat)}</span>` : ''}
             </div>
             
             <div class="flex items-center justify-between p-1 rounded ${isFireActive ? 'bg-red-100 ring-1 ring-red-400 font-bold' : ''}">
@@ -376,6 +381,21 @@ export const MapViewer: React.FC<MapViewerProps> = ({
               <span class="text-slate-700 flex items-center gap-1">💧 Déficit Hídrico:</span>
               <span class="px-1.5 py-0.2 rounded font-bold ${waterBadge.bg} border">${waterBadge.label}</span>
             </div>
+
+            <!-- PMR Row inside Evaluation -->
+            <div class="flex items-center justify-between p-1 rounded ${hasPmr ? 'bg-purple-100 ring-1 ring-purple-400 font-bold' : (isPmrActive ? 'bg-purple-50' : '')}">
+              <span class="text-slate-700 flex items-center gap-1 font-semibold">♿ PMR (Movilidad Reducida):</span>
+              ${hasPmr 
+                ? `<span class="px-1.5 py-0.2 rounded font-bold bg-purple-700 text-white border border-purple-800 text-[10px]">Sí (${point.pmrCount || 1} pers.)</span>`
+                : `<span class="px-1.5 py-0.2 rounded font-semibold bg-slate-100 text-slate-500 border border-slate-200 text-[10px]">No</span>`
+              }
+            </div>
+
+            ${(hasPmr && point.pmrDetails) ? `
+              <div class="text-[9px] text-purple-900 bg-purple-50 px-1.5 py-1 rounded border border-purple-200 italic font-medium">
+                ℹ️ <strong>Detalle PMR:</strong> ${escapeHtml(point.pmrDetails)}
+              </div>
+            ` : ''}
           </div>
 
           ${point.description ? `
@@ -407,9 +427,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         </div>
       `;
 
-      marker.bindPopup(popupHtml, { maxWidth: 330 });
+      marker.bindPopup(popupHtml, { maxWidth: 340 });
     });
-  }, [filteredRiskPoints, filterState.activeSpecificCategory, setSelectedPoint, onSelectPointDetail]);
+  }, [filteredRiskPoints, filterState.activeSpecificCategory, filterState.filterPmrOnly, setSelectedPoint, onSelectPointDetail]);
 
   // GPS Geolocation Handler
   const handleGetGpsLocation = () => {
@@ -598,26 +618,36 @@ function getPointEffectiveRiskLevel(point: RiskPoint, activeCategory?: ThreatCat
 }
 
 // Helper: Creates custom Leaflet DivIcon with hazard symbols and dynamic severity color
-function createRiskPointIcon(point: RiskPoint, activeCategory?: ThreatCategory | null): L.DivIcon {
-  const effectiveLevel = getPointEffectiveRiskLevel(point, activeCategory);
+function createRiskPointIcon(point: RiskPoint, activeCategory?: ThreatCategory | 'pmr' | null, filterPmrOnly?: boolean): L.DivIcon {
+  const isPmrActive = activeCategory === 'pmr' || Boolean(filterPmrOnly);
+  const hasPmr = Boolean(point.hasPmr || (point.pmrCount && point.pmrCount > 0));
+
+  let bgColor = '#10B981'; // default green for bajo
+  let isPmrHighlight = false;
+
+  if (isPmrActive && hasPmr) {
+    // Exact purple color (#7E22CE / rgb(126, 34, 206)) matching the PMR button
+    bgColor = '#7E22CE';
+    isPmrHighlight = true;
+  } else {
+    const effectiveLevel = getPointEffectiveRiskLevel(point, activeCategory as ThreatCategory);
+    if (effectiveLevel === 'critico') bgColor = '#DC2626'; // red
+    else if (effectiveLevel === 'alto') bgColor = '#EA580C'; // orange / naranjo alto
+    else if (effectiveLevel === 'medio') bgColor = '#F59E0B'; // amber / naranjo medio
+    else if (effectiveLevel === 'bajo') bgColor = '#10B981'; // emerald green / verde bajo
+    else if (effectiveLevel === 'informativo') bgColor = '#3B82F6'; // blue
+    else if (effectiveLevel === 'no_aplica') bgColor = '#64748B'; // slate gray
+  }
   
-  // Exact color matching requested by the user (Bajo: Verde, Medio: Naranjo/Ámbar, Alto: Naranjo Oscuro, Crítico: Rojo)
-  let bgColor = '#10B981'; // green for bajo
-  if (effectiveLevel === 'critico') bgColor = '#DC2626'; // red
-  else if (effectiveLevel === 'alto') bgColor = '#EA580C'; // orange / naranjo alto
-  else if (effectiveLevel === 'medio') bgColor = '#F59E0B'; // amber / naranjo medio
-  else if (effectiveLevel === 'bajo') bgColor = '#10B981'; // emerald green / verde bajo
-  else if (effectiveLevel === 'informativo') bgColor = '#3B82F6'; // blue
-  else if (effectiveLevel === 'no_aplica') bgColor = '#64748B'; // slate gray
-  
-  const isCritical = effectiveLevel === 'critico';
-  const displayCategory = (activeCategory && activeCategory !== 'sectores') ? activeCategory : (point.category || 'sectores');
+  const isCritical = !isPmrHighlight && getPointEffectiveRiskLevel(point, activeCategory as ThreatCategory) === 'critico';
+  const displayCategory = isPmrHighlight ? 'pmr' : ((activeCategory && activeCategory !== 'sectores' && activeCategory !== 'pmr') ? activeCategory : (point.category || 'sectores'));
 
   return L.divIcon({
     className: 'custom-risk-marker',
     html: `
       <div class="relative flex items-center justify-center cursor-pointer group">
         ${isCritical ? `<div class="absolute w-10 h-10 rounded-full bg-red-500/40 risk-pulse-critical -z-10"></div>` : ''}
+        ${isPmrHighlight ? `<div class="absolute w-10 h-10 rounded-full bg-purple-600/40 risk-pulse-critical -z-10"></div>` : ''}
         <div style="background-color: ${bgColor};" class="w-8 h-8 rounded-xl border-2 border-white shadow-lg flex items-center justify-center text-white transition-transform transform group-hover:scale-110">
           ${getCategorySvgIcon(displayCategory)}
         </div>
@@ -630,7 +660,7 @@ function createRiskPointIcon(point: RiskPoint, activeCategory?: ThreatCategory |
   });
 }
 
-function getCategorySvgIcon(category: ThreatCategory | string): string {
+function getCategorySvgIcon(category: ThreatCategory | 'pmr' | string): string {
   switch (category) {
     case 'incendios':
       return `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/></svg>`;

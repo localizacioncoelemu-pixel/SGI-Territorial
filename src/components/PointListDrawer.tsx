@@ -158,9 +158,16 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
                       {point.title}
                     </span>
                   </div>
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${badge.bg} border flex-shrink-0`}>
-                    {badge.label}
-                  </span>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {(point.hasPmr || (point.pmrCount && point.pmrCount > 0)) && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-700 text-white border border-purple-800">
+                        ♿ PMR ({point.pmrCount || 1})
+                      </span>
+                    )}
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${badge.bg} border flex-shrink-0`}>
+                      {badge.label}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 text-[11px] text-slate-500 mb-1.5">

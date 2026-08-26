@@ -208,15 +208,15 @@ export const LoginPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Install App Link */}
+            {/* Install App / Download Shortcut Link */}
             <div className="pt-1">
               <button
                 type="button"
                 onClick={() => setInstallModalOpen(true)}
-                className="w-full py-2 px-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-slate-300 hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                className="w-full py-2.5 px-3 bg-slate-950 hover:bg-slate-850 hover:border-emerald-500/50 border border-slate-800 rounded-xl text-slate-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
               >
-                <Download className="w-3.5 h-3.5 text-slate-400" />
-                <span>Instalar Aplicación en Celular o PC</span>
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>Descargar Acceso Directo (Escritorio / Celular)</span>
               </button>
             </div>
 

@@ -21,7 +21,8 @@ import {
   EyeOff,
   Copy,
   RefreshCw,
-  KeyRound
+  KeyRound,
+  CloudCheck
 } from 'lucide-react';
 import { useAuth, CreateUserData } from '../context/AuthContext';
 import { UserProfile, UserRole } from '../types';
@@ -32,10 +33,12 @@ interface UserManagerModalProps {
 }
 
 export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onClose }) => {
-  const { user, allUsers, createUser, updateUser, resetUserPassword, deleteUserProfile } = useAuth();
+  const { user, allUsers, createUser, updateUser, resetUserPassword, deleteUserProfile, refreshUsers } = useAuth();
   
   const [search, setSearch] = useState('');
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Create / Edit modal state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -63,13 +66,32 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
     setTimeout(() => setActionMessage(null), 4500);
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshUsers();
+      showNotification('Lista de funcionarios sincronizada con Firebase Firestore.');
+    } catch {
+      showNotification('Error al sincronizar con Firestore', 'error');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const togglePasswordVisibility = (uid: string) => {
+    setRevealedPasswords(prev => ({
+      ...prev,
+      [uid]: !prev[uid]
+    }));
+  };
+
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$';
-    let result = '';
-    for (let i = 0; i < 8; i++) {
+    let result = 'C';
+    for (let i = 0; i < 7; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    setFormData((prev) => ({ ...prev, password: result }));
+    setFormData((prev) => ({ ...prev, password: result + '26!' }));
   };
 
   const filtered = allUsers.filter((u) => 
@@ -117,7 +139,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
     }
 
     if (!editingUser && (!formData.password || formData.password.length < 6)) {
-      showNotification('La contraseña debe tener al menos 6 caracteres para Firebase.', 'error');
+      showNotification('La contraseña debe tener al menos 6 caracteres para acceso cross-device.', 'error');
       return;
     }
 
@@ -126,29 +148,29 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
         // Update existing user
         await updateUser(editingUser.uid, {
           displayName: formData.displayName.trim(),
-          email: formData.email.trim(),
+          email: formData.email.trim().toLowerCase(),
           department: formData.department?.trim(),
           phone: formData.phone?.trim(),
           role: formData.role,
           status: formData.status,
           passwordHint: formData.password?.trim() || editingUser.passwordHint,
         });
-        showNotification(`Usuario "${formData.displayName}" actualizado exitosamente.`);
+        showNotification(`Usuario "${formData.displayName}" actualizado y sincronizado en Firestore.`);
       } else {
         // Create new user
         await createUser(formData);
-        showNotification(`Nuevo usuario "${formData.displayName}" registrado con credenciales.`);
+        showNotification(`Nuevo usuario "${formData.displayName}" registrado en Firestore con acceso desde cualquier dispositivo.`);
       }
       setIsFormOpen(false);
       setEditingUser(null);
     } catch (err: any) {
-      showNotification(err.message || 'Error al guardar el usuario', 'error');
+      showNotification(err.message || 'Error al guardar el usuario en Firebase', 'error');
     }
   };
 
   const handleCopyCredentials = (u: UserProfile) => {
     const pass = u.passwordHint || 'Coelemu2026';
-    const text = `Credenciales de Acceso - SIG Coelemu\nUsuario: ${u.email}\nContraseña: ${pass}\nRol: ${u.role === 'admin' ? 'Administrador' : 'Usuario'}`;
+    const text = `Credenciales de Acceso - SIG Territorial Coelemu\nUsuario: ${u.email}\nContraseña: ${pass}\nRol: ${u.role === 'admin' ? 'Administrador' : 'Usuario (Terreno)'}`;
     navigator.clipboard.writeText(text);
     showNotification(`Credenciales de ${u.displayName} copiadas al portapapeles.`);
   };
@@ -157,7 +179,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
     if (!userToDelete) return;
     try {
       await deleteUserProfile(userToDelete.uid);
-      showNotification(`Usuario "${userToDelete.displayName}" eliminado correctamente.`);
+      showNotification(`Usuario "${userToDelete.displayName}" eliminado de Firestore.`);
       setUserToDelete(null);
     } catch (err: any) {
       showNotification(err.message || 'Error al eliminar usuario', 'error');
@@ -178,20 +200,36 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
               <Users className="w-5 h-5 text-slate-200" />
             </div>
             <div>
-              <h3 className="font-bold text-base sm:text-lg tracking-tight leading-tight">
-                Gestión de Usuarios y Control de Accesos
-              </h3>
-              <p className="text-xs text-slate-400 leading-tight">
-                Administración de funcionarios, contraseñas y roles (Administrador / Usuario)
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base sm:text-lg tracking-tight leading-tight">
+                  Gestión de Usuarios y Control de Accesos
+                </h3>
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 text-[10px] font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Firebase Firestore Cloud
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 leading-tight mt-0.5">
+                Los usuarios registrados aquí pueden ingresar desde cualquier dispositivo (celular, tablet o PC)
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              title="Sincronizar usuarios con Firebase Firestore"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Roles Description Banner */}
@@ -265,8 +303,9 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
             </div>
           ) : (
             filtered.map((u) => {
-              const isCurrentUser = user?.uid === u.uid;
+              const isCurrentUser = user?.uid === u.uid || user?.email?.toLowerCase() === u.email?.toLowerCase();
               const isSuperAdmin = u.email?.toLowerCase() === 'localizacioncoelemu@gmail.com';
+              const isPassRevealed = revealedPasswords[u.uid] || false;
 
               return (
                 <div
@@ -308,7 +347,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
                       </div>
 
                       <div className="text-slate-500 text-[11px] flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                        <span className="flex items-center gap-1 font-mono">
+                        <span className="flex items-center gap-1 font-mono text-slate-700">
                           <Mail className="w-3 h-3 text-slate-400" />
                           {u.email}
                         </span>
@@ -325,10 +364,18 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
                           </span>
                         )}
                         {u.passwordHint && (
-                          <span className="flex items-center gap-1 text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                          <div className="flex items-center gap-1 text-slate-700 bg-slate-100 px-2 py-0.5 rounded font-mono text-[10px] border border-slate-200">
                             <KeyRound className="w-2.5 h-2.5 text-slate-500" />
-                            Pass: ••••••••
-                          </span>
+                            <span>Pass: {isPassRevealed ? u.passwordHint : '••••••••'}</span>
+                            <button
+                              type="button"
+                              onClick={() => togglePasswordVisibility(u.uid)}
+                              className="ml-1 text-slate-500 hover:text-slate-800 cursor-pointer"
+                              title={isPassRevealed ? 'Ocultar' : 'Ver contraseña'}
+                            >
+                              {isPassRevealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -376,9 +423,13 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
 
         {/* Modal Footer */}
         <div className="bg-slate-50 border-t border-slate-200 px-5 py-3 flex items-center justify-between text-xs">
-          <span className="text-slate-500 font-medium">
-            Total: {allUsers.length} funcionarios con acceso registrado en la comuna
-          </span>
+          <div className="flex items-center gap-2 text-slate-500 font-medium">
+            <span>Total: {allUsers.length} funcionarios con acceso registrado en la comuna</span>
+            <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+            <span className="text-emerald-700 font-semibold flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Sincronización Multi-Dispositivo Activa
+            </span>
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold transition-colors cursor-pointer"
@@ -403,7 +454,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
               </div>
               <button
                 onClick={() => setIsFormOpen(false)}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -434,7 +485,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
                   placeholder="Ej: mmorales@coelemu.cl"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-slate-800 focus:outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-slate-800 focus:outline-none font-mono"
                 />
               </div>
 
@@ -474,7 +525,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1">
-                  Esta clave permitirá al funcionario iniciar sesión en el portal y en la app móvil.
+                  Esta clave permitirá al funcionario iniciar sesión desde cualquier dispositivo (celular, tablet o PC).
                 </p>
               </div>
 
@@ -598,4 +649,5 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({ isOpen, onCl
     </div>
   );
 };
+
 

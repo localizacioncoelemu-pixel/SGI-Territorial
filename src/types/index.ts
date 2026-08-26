@@ -88,6 +88,9 @@ export interface KmzLayer {
   uploadedByName: string;
   createdAt: number;
   fileSize?: number;
+  isChunked?: boolean;
+  totalChunks?: number;
+  updatedAt?: number;
 }
 
 export interface RiskPoint {

@@ -12,6 +12,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
     
+    // Large KMZ GeoJSON Chunks for reliable cross-device synchronization
+    match /layer_chunks/{chunkId} {
+      allow read, write: if true;
+    }
+    
     // Georeferenced Risk Points & Threats
     match /riskPoints/{pointId} {
       allow read, write: if true;

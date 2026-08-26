@@ -24,6 +24,11 @@ import {
   clearAllLocalLayers,
   sanitizeForFirestore 
 } from '../services/layerStorage';
+import {
+  saveLayerToFirestore,
+  resolveFullLayerFromFirestore,
+  deleteLayerFromFirestore,
+} from '../services/firestoreLayerSync';
 import { useAuth } from './AuthContext';
 
 interface DataContextType {
@@ -167,11 +172,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const layersCol = collection(db, 'layers');
-      unsubLayers = onSnapshot(layersCol, (snapshot) => {
-        const firestoreLayers: KmzLayer[] = [];
+      unsubLayers = onSnapshot(layersCol, async (snapshot) => {
+        const rawFirestoreLayers: KmzLayer[] = [];
         snapshot.forEach((d) => {
           const layerData = d.data() as KmzLayer;
-          // Only include layers uploaded by user, discard legacy demo data
+          // Only include user-created layers, discard legacy demo data
           if (
             layerData &&
             !layerData.id.startsWith('layer_incendios_') &&
@@ -180,11 +185,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             !layerData.id.startsWith('layer_albergues_') &&
             layerData.uploadedBy !== 'system'
           ) {
-            firestoreLayers.push(layerData);
+            rawFirestoreLayers.push(layerData);
           }
         });
+
+        // Resolve chunked layers if any
+        const resolvedLayers: KmzLayer[] = await Promise.all(
+          rawFirestoreLayers.map((l) => resolveFullLayerFromFirestore(l))
+        );
+
+        // Update local DB cache for offline/instant availability
+        for (const l of resolvedLayers) {
+          saveLayerToLocalDB(l).catch(() => {});
+        }
         
-        setLayers(firestoreLayers);
+        setLayers(resolvedLayers);
         setIsSyncing(false);
         setLastSyncTime(Date.now());
       }, (err) => {
@@ -240,9 +255,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('LocalDB layer save warning:', dbErr);
     }
 
-    // 3. Sync to Firestore in background
+    // 3. Sync to Firestore in background using chunked storage if needed
     try {
-      await setDoc(doc(db, 'layers', sanitized.id), sanitized);
+      await saveLayerToFirestore(sanitized);
     } catch (err: any) {
       console.warn('Layer synced locally (Firestore cloud sync note):', err.message || err);
     } finally {
@@ -255,17 +270,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsSyncing(true);
     const sanitizedUpdates = sanitizeForFirestore(updates);
     
+    let targetLayer: KmzLayer | undefined;
     setLayers((prev) => {
-      const updated = prev.map((l) => l.id === id ? { ...l, ...sanitizedUpdates } : l);
-      const target = updated.find((l) => l.id === id);
-      if (target) {
-        saveLayerToLocalDB(target).catch(console.warn);
+      const updated = prev.map((l) => {
+        if (l.id === id) {
+          const full = { ...l, ...sanitizedUpdates };
+          targetLayer = full;
+          return full;
+        }
+        return l;
+      });
+      if (targetLayer) {
+        saveLayerToLocalDB(targetLayer).catch(console.warn);
       }
       return updated;
     });
 
     try {
-      await updateDoc(doc(db, 'layers', id), sanitizedUpdates);
+      if (targetLayer) {
+        await saveLayerToFirestore(targetLayer);
+      } else {
+        await updateDoc(doc(db, 'layers', id), sanitizedUpdates);
+      }
     } catch (err) {
       console.warn('Firestore layer update note:', err);
     } finally {
@@ -283,6 +309,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteLayer = async (id: string) => {
     setIsSyncing(true);
+    const targetLayer = layers.find((l) => l.id === id);
     setLayers((prev) => prev.filter((l) => l.id !== id));
     if (selectedLayer?.id === id) setSelectedLayer(null);
     
@@ -293,9 +320,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Local DB layer delete error:', e);
     }
 
-    // Remove from Firestore
+    // Remove from Firestore (and any chunks)
     try {
-      await deleteDoc(doc(db, 'layers', id));
+      await deleteLayerFromFirestore(id, targetLayer?.totalChunks);
     } catch (err) {
       console.warn('Firestore deleteLayer note:', err);
     } finally {
@@ -536,6 +563,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else if (evalLvl === 'no_aplica') {
             return false;
           }
+        } else if (cat === 'pmr') {
+          const hasPmr = point.hasPmr || (typeof point.pmrCount === 'number' && point.pmrCount > 0);
+          if (!hasPmr) return false;
         } else if (cat === 'sectores') {
           // Show all sector points
         } else {
