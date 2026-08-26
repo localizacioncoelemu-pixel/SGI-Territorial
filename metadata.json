@@ -1,0 +1,6 @@
+{
+  "name": "SIG Territorial Personal",
+  "description": "Sistema de Información Geográfica personal para visualización de capas KMZ/KML, administración de sectores, familias, puntos georreferenciados y rutas.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

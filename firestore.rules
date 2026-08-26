@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Allow read/write to all collections for risk management & GIS operations
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    
+    // Layers / KMZ data collection
+    match /layers/{layerId} {
+      allow read, write: if true;
+    }
+    
+    // Georeferenced Risk Points & Threats
+    match /riskPoints/{pointId} {
+      allow read, write: if true;
+    }
+    
+    // Settings & Comuna metadata
+    match /systemSettings/{settingId} {
+      allow read, write: if true;
+    }
+  }
+}
+

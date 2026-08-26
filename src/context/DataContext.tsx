@@ -1,0 +1,635 @@
+import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import { 
+  db, 
+  collection, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot 
+} from '../lib/firebase';
+import { 
+  KmzLayer, 
+  RiskPoint, 
+  FilterState, 
+  ThreatCategory, 
+  ThreatLevel,
+  PointStatus 
+} from '../types';
+import { INITIAL_DEMO_LAYERS, INITIAL_RISK_POINTS, DEFAULT_COMUNA_CENTER } from '../services/initialData';
+import { 
+  saveLayerToLocalDB, 
+  getAllLayersFromLocalDB, 
+  deleteLayerFromLocalDB, 
+  clearAllLocalLayers,
+  sanitizeForFirestore 
+} from '../services/layerStorage';
+import { useAuth } from './AuthContext';
+
+interface DataContextType {
+  layers: KmzLayer[];
+  riskPoints: RiskPoint[];
+  loading: boolean;
+  isSyncing: boolean;
+  isOnline: boolean;
+  lastSyncTime: number;
+  filterState: FilterState;
+  setFilterState: React.Dispatch<React.SetStateAction<FilterState>>;
+  filteredLayers: KmzLayer[];
+  filteredRiskPoints: RiskPoint[];
+  selectedPoint: RiskPoint | null;
+  setSelectedPoint: (point: RiskPoint | null) => void;
+  selectedLayer: KmzLayer | null;
+  setSelectedLayer: (layer: KmzLayer | null) => void;
+  mapFlyTo: { lat: number; lng: number; zoom?: number } | null;
+  setMapFlyTo: (pos: { lat: number; lng: number; zoom?: number } | null) => void;
+  addLayer: (layer: KmzLayer) => Promise<void>;
+  updateLayer: (id: string, updates: Partial<KmzLayer>) => Promise<void>;
+  toggleLayerVisibility: (id: string) => Promise<void>;
+  deleteLayer: (id: string) => Promise<void>;
+  addRiskPoint: (pointData: Omit<RiskPoint, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'createdByName'>) => Promise<string>;
+  updateRiskPoint: (id: string, updates: Partial<RiskPoint>) => Promise<void>;
+  deleteRiskPoint: (id: string) => Promise<void>;
+  restoreDefaultData: () => Promise<void>;
+  exportComunaGeoJSON: () => string;
+}
+
+const initialFilterState: FilterState = {
+  categories: [],
+  threatLevels: [],
+  selectedLayerIds: [],
+  selectedSectors: [],
+  searchKeyword: '',
+  onlyCritical: false,
+  filterPmrOnly: false,
+  activeSpecificCategory: null,
+  activeSpecificSeverity: null,
+  statuses: [],
+};
+
+const DataContext = createContext<DataContextType | undefined>(undefined);
+
+export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  
+  const [layers, setLayers] = useState<KmzLayer[]>(() => {
+    const local = localStorage.getItem('sig_cached_layers');
+    if (local) {
+      try {
+        const parsed = JSON.parse(local) as KmzLayer[];
+        // Filter out any previous demo layers so only user-uploaded layers remain
+        return parsed.filter((l) => !l.id.startsWith('layer_incendios_') && !l.id.startsWith('layer_inundacion_') && !l.id.startsWith('layer_evacuacion_') && !l.id.startsWith('layer_albergues_') && l.uploadedBy !== 'system');
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
+  
+  const [riskPoints, setRiskPoints] = useState<RiskPoint[]>(() => {
+    try {
+      const local = localStorage.getItem('sig_cached_points');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) {
+          // Filter out legacy demo points
+          return parsed.filter((p: RiskPoint) => !p.id.startsWith('point_00') && p.createdBy !== 'admin_sys');
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [lastSyncTime, setLastSyncTime] = useState<number>(Date.now());
+  const [filterState, setFilterState] = useState<FilterState>(initialFilterState);
+  const [selectedPoint, setSelectedPoint] = useState<RiskPoint | null>(null);
+  const [selectedLayer, setSelectedLayer] = useState<KmzLayer | null>(null);
+  const [mapFlyTo, setMapFlyTo] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
+
+  // Monitor online status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Load from IndexedDB on initial mount
+  useEffect(() => {
+    getAllLayersFromLocalDB().then((storedLayers) => {
+      if (storedLayers && storedLayers.length > 0) {
+        setLayers((prev) => {
+          // Merge stored with existing
+          const map = new Map<string, KmzLayer>();
+          storedLayers.forEach((l) => map.set(l.id, l));
+          prev.forEach((l) => {
+            if (!map.has(l.id)) map.set(l.id, l);
+          });
+          return Array.from(map.values());
+        });
+      }
+    }).catch((err) => {
+      console.warn('Initial IndexedDB load error:', err);
+    });
+  }, []);
+
+  // Sync to local storage / IndexedDB whenever data updates
+  useEffect(() => {
+    try {
+      localStorage.setItem('sig_cached_layers', JSON.stringify(layers));
+    } catch (e) {
+      console.warn('LocalStorage layers cache quota warning:', e);
+    }
+  }, [layers]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sig_cached_points', JSON.stringify(riskPoints));
+    } catch (e) {
+      console.warn('LocalStorage points cache error:', e);
+    }
+  }, [riskPoints]);
+
+  // Firestore Real-Time Subscriptions for user uploaded layers
+  useEffect(() => {
+    setIsSyncing(true);
+    let unsubLayers: (() => void) | undefined;
+    let unsubPoints: (() => void) | undefined;
+
+    try {
+      const layersCol = collection(db, 'layers');
+      unsubLayers = onSnapshot(layersCol, (snapshot) => {
+        const firestoreLayers: KmzLayer[] = [];
+        snapshot.forEach((d) => {
+          const layerData = d.data() as KmzLayer;
+          // Only include layers uploaded by user, discard legacy demo data
+          if (
+            layerData &&
+            !layerData.id.startsWith('layer_incendios_') &&
+            !layerData.id.startsWith('layer_inundacion_') &&
+            !layerData.id.startsWith('layer_evacuacion_') &&
+            !layerData.id.startsWith('layer_albergues_') &&
+            layerData.uploadedBy !== 'system'
+          ) {
+            firestoreLayers.push(layerData);
+          }
+        });
+        
+        setLayers(firestoreLayers);
+        setIsSyncing(false);
+        setLastSyncTime(Date.now());
+      }, (err) => {
+        console.warn('Firestore layers onSnapshot:', err);
+        setIsSyncing(false);
+      });
+    } catch (err) {
+      console.warn('Firestore layers setup error:', err);
+      setIsSyncing(false);
+    }
+
+    try {
+      const pointsCol = collection(db, 'riskPoints');
+      unsubPoints = onSnapshot(pointsCol, (snapshot) => {
+        const list: RiskPoint[] = [];
+        snapshot.forEach((d) => {
+          const pt = d.data() as RiskPoint;
+          if (pt && !pt.id.startsWith('point_00') && pt.createdBy !== 'admin_sys') {
+            list.push(pt);
+          }
+        });
+        
+        setRiskPoints(list);
+        setIsSyncing(false);
+        setLastSyncTime(Date.now());
+      }, (err) => {
+        console.warn('Firestore points onSnapshot:', err);
+        setIsSyncing(false);
+      });
+    } catch (err) {
+      console.warn('Firestore points setup error:', err);
+      setIsSyncing(false);
+    }
+
+    return () => {
+      if (unsubLayers) unsubLayers();
+      if (unsubPoints) unsubPoints();
+    };
+  }, []);
+
+  // Actions
+  const addLayer = async (newLayer: KmzLayer) => {
+    setIsSyncing(true);
+    const sanitized = sanitizeForFirestore(newLayer);
+    
+    // 1. Immediately update React state so the UI reflects the new layer instantly
+    setLayers((prev) => [sanitized, ...prev.filter((l) => l.id !== sanitized.id)]);
+    
+    // 2. Persist to local IndexedDB (guaranteed storage even for 20MB files)
+    try {
+      await saveLayerToLocalDB(sanitized);
+    } catch (dbErr) {
+      console.warn('LocalDB layer save warning:', dbErr);
+    }
+
+    // 3. Sync to Firestore in background
+    try {
+      await setDoc(doc(db, 'layers', sanitized.id), sanitized);
+    } catch (err: any) {
+      console.warn('Layer synced locally (Firestore cloud sync note):', err.message || err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  const updateLayer = async (id: string, updates: Partial<KmzLayer>) => {
+    setIsSyncing(true);
+    const sanitizedUpdates = sanitizeForFirestore(updates);
+    
+    setLayers((prev) => {
+      const updated = prev.map((l) => l.id === id ? { ...l, ...sanitizedUpdates } : l);
+      const target = updated.find((l) => l.id === id);
+      if (target) {
+        saveLayerToLocalDB(target).catch(console.warn);
+      }
+      return updated;
+    });
+
+    try {
+      await updateDoc(doc(db, 'layers', id), sanitizedUpdates);
+    } catch (err) {
+      console.warn('Firestore layer update note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  const toggleLayerVisibility = async (id: string) => {
+    const target = layers.find((l) => l.id === id);
+    if (!target) return;
+    const newVisibility = !target.isVisible;
+    await updateLayer(id, { isVisible: newVisibility });
+  };
+
+  const deleteLayer = async (id: string) => {
+    setIsSyncing(true);
+    setLayers((prev) => prev.filter((l) => l.id !== id));
+    if (selectedLayer?.id === id) setSelectedLayer(null);
+    
+    // Remove from local IndexedDB
+    try {
+      await deleteLayerFromLocalDB(id);
+    } catch (e) {
+      console.warn('Local DB layer delete error:', e);
+    }
+
+    // Remove from Firestore
+    try {
+      await deleteDoc(doc(db, 'layers', id));
+    } catch (err) {
+      console.warn('Firestore deleteLayer note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  const addRiskPoint = async (
+    pointData: Omit<RiskPoint, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'createdByName'>
+  ): Promise<string> => {
+    setIsSyncing(true);
+    const newId = `point_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newPoint: RiskPoint = sanitizeForFirestore({
+      ...pointData,
+      id: newId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      createdBy: user?.uid || 'anon',
+      createdByName: user?.displayName || 'Funcionario Municipal',
+    });
+
+    setRiskPoints((prev) => [newPoint, ...prev]);
+    try {
+      await setDoc(doc(db, 'riskPoints', newId), newPoint);
+    } catch (err) {
+      console.warn('Firestore risk point save note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+    return newId;
+  };
+
+  const updateRiskPoint = async (id: string, updates: Partial<RiskPoint>) => {
+    setIsSyncing(true);
+    const updatedData = sanitizeForFirestore({ ...updates, updatedAt: Date.now() });
+    setRiskPoints((prev) => prev.map((p) => p.id === id ? { ...p, ...updatedData } : p));
+    if (selectedPoint?.id === id) {
+      setSelectedPoint((prev) => prev ? { ...prev, ...updatedData } : null);
+    }
+    try {
+      await updateDoc(doc(db, 'riskPoints', id), updatedData);
+    } catch (err) {
+      console.warn('Firestore risk point update note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  const deleteRiskPoint = async (id: string) => {
+    setIsSyncing(true);
+    setRiskPoints((prev) => prev.filter((p) => p.id !== id));
+    if (selectedPoint?.id === id) setSelectedPoint(null);
+    try {
+      await deleteDoc(doc(db, 'riskPoints', id));
+    } catch (err) {
+      console.warn('Firestore deleteRiskPoint note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  const restoreDefaultData = async () => {
+    setIsSyncing(true);
+    await clearAllLocalLayers();
+    setLayers(INITIAL_DEMO_LAYERS);
+    setRiskPoints(INITIAL_RISK_POINTS);
+    for (const l of INITIAL_DEMO_LAYERS) {
+      try {
+        await saveLayerToLocalDB(l);
+        await setDoc(doc(db, 'layers', l.id), sanitizeForFirestore(l));
+      } catch {
+        // ignore
+      }
+    }
+    for (const p of INITIAL_RISK_POINTS) {
+      try {
+        await setDoc(doc(db, 'riskPoints', p.id), sanitizeForFirestore(p));
+      } catch {
+        // ignore
+      }
+    }
+    setIsSyncing(false);
+    setLastSyncTime(Date.now());
+  };
+
+  // Export combined data as GeoJSON
+  const exportComunaGeoJSON = () => {
+    const combinedFeatures: any[] = [];
+
+    // Add layer features
+    layers.filter(l => l.isVisible).forEach(layer => {
+      layer.geojson.features.forEach(f => {
+        combinedFeatures.push({
+          ...f,
+          properties: {
+            ...f.properties,
+            layerName: layer.name,
+            layerCategory: layer.category,
+          }
+        });
+      });
+    });
+
+    // Add georeferenced risk points
+    riskPoints.forEach(p => {
+      combinedFeatures.push({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [p.coordinates.lng, p.coordinates.lat]
+        },
+        properties: {
+          name: p.title,
+          threatType: p.threatType,
+          riskLevel: p.riskLevel,
+          sector: p.sector,
+          description: p.description,
+          status: p.status,
+          actionsRequired: p.actionsRequired,
+          contactPhone: p.contactPhone,
+          responsibleEntity: p.responsibleEntity,
+          updatedAt: new Date(p.updatedAt).toISOString()
+        }
+      });
+    });
+
+    return JSON.stringify({
+      type: 'FeatureCollection',
+      name: 'SIG_Comunal_Gestion_Riesgos_Export',
+      crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+      features: combinedFeatures
+    }, null, 2);
+  };
+
+  // Filtered Layers and Risk Points computation
+  const filteredLayers = useMemo(() => {
+    return layers.filter((layer) => {
+      // Layer ID filter
+      if (filterState.selectedLayerIds.length > 0 && !filterState.selectedLayerIds.includes(layer.id)) {
+        return false;
+      }
+      // Category filter
+      if (filterState.categories.length > 0 && !filterState.categories.includes(layer.category)) {
+        return false;
+      }
+      // Sector filter (multi-selection of sectors e.g. ['Burca', 'Guarilihue'])
+      if (filterState.selectedSectors.length > 0) {
+        const matchesSector = filterState.selectedSectors.some((sec) => {
+          const s = sec.toLowerCase();
+          const layerSector = (layer.sector || '').toLowerCase();
+          const layerName = layer.name.toLowerCase();
+          const layerDesc = (layer.description || '').toLowerCase();
+          return layerSector.includes(s) || layerName.includes(s) || layerDesc.includes(s) ||
+            layer.geojson.features.some(f => 
+              (f.properties?.name || '').toLowerCase().includes(s) ||
+              (f.properties?.sector || '').toLowerCase().includes(s)
+            );
+        });
+        if (!matchesSector) {
+          return false;
+        }
+      }
+      // Threat level filter
+      if (filterState.threatLevels.length > 0 && !filterState.threatLevels.includes(layer.threatLevel)) {
+        return false;
+      }
+      // Only critical filter
+      if (filterState.onlyCritical && layer.threatLevel !== 'critico' && layer.threatLevel !== 'alto') {
+        return false;
+      }
+      // Search keyword filter
+      if (filterState.searchKeyword.trim()) {
+        const kw = filterState.searchKeyword.toLowerCase();
+        const matchesName = layer.name.toLowerCase().includes(kw);
+        const matchesCat = layer.threatType.toLowerCase().includes(kw);
+        const matchesSector = (layer.sector || '').toLowerCase().includes(kw);
+        const matchesDesc = (layer.description || '').toLowerCase().includes(kw);
+        const matchesFeatures = layer.geojson.features.some(f => 
+          (f.properties?.name || '').toLowerCase().includes(kw) ||
+          (f.properties?.description || '').toLowerCase().includes(kw)
+        );
+        if (!matchesName && !matchesCat && !matchesSector && !matchesDesc && !matchesFeatures) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [layers, filterState]);
+
+  const filteredRiskPoints = useMemo(() => {
+    return riskPoints.filter((point) => {
+      // 1. PMR (Movilidad Reducida) Filter
+      if (filterState.filterPmrOnly) {
+        const hasPmr = point.hasPmr || (typeof point.pmrCount === 'number' && point.pmrCount > 0);
+        if (!hasPmr) return false;
+      }
+
+      // 2. Specific Category + Severity matrix evaluation
+      // (e.g., if Incendios is active, check specific rating in hazardEvaluations.incendio)
+      if (filterState.activeSpecificCategory) {
+        const cat = filterState.activeSpecificCategory;
+        if (cat === 'incendios') {
+          const evalLvl = point.hazardEvaluations?.incendio || (point.category === 'incendios' ? point.riskLevel : 'no_aplica');
+          if (filterState.threatLevels.length > 0) {
+            if (!filterState.threatLevels.includes(evalLvl)) return false;
+          } else if (evalLvl === 'no_aplica') {
+            return false;
+          }
+        } else if (cat === 'inundaciones') {
+          const evalLvl = point.hazardEvaluations?.inundacion || (point.category === 'inundaciones' ? point.riskLevel : 'no_aplica');
+          if (filterState.threatLevels.length > 0) {
+            if (!filterState.threatLevels.includes(evalLvl)) return false;
+          } else if (evalLvl === 'no_aplica') {
+            return false;
+          }
+        } else if (cat === 'remocion_masa') {
+          const evalLvl = point.hazardEvaluations?.remocion_masa || (point.category === 'remocion_masa' ? point.riskLevel : 'no_aplica');
+          if (filterState.threatLevels.length > 0) {
+            if (!filterState.threatLevels.includes(evalLvl)) return false;
+          } else if (evalLvl === 'no_aplica') {
+            return false;
+          }
+        } else if (cat === 'rutas_evacuacion') {
+          const evalLvl = point.hazardEvaluations?.corte_ruta || (point.category === 'rutas_evacuacion' ? point.riskLevel : 'no_aplica');
+          if (filterState.threatLevels.length > 0) {
+            if (!filterState.threatLevels.includes(evalLvl)) return false;
+          } else if (evalLvl === 'no_aplica') {
+            return false;
+          }
+        } else if (cat === 'deficit_hidrico') {
+          const evalLvl = point.hazardEvaluations?.deficit_hidrico || 'no_aplica';
+          if (filterState.threatLevels.length > 0) {
+            if (!filterState.threatLevels.includes(evalLvl)) return false;
+          } else if (evalLvl === 'no_aplica') {
+            return false;
+          }
+        } else if (cat === 'sectores') {
+          // Show all sector points
+        } else {
+          if (point.category !== cat) return false;
+        }
+      } else if (filterState.categories.length > 0 && !filterState.categories.includes(point.category) && !filterState.categories.includes('sectores')) {
+        return false;
+      }
+
+      // 3. Sector filter (matches point sector or layer)
+      if (filterState.selectedSectors.length > 0) {
+        const matchesSector = filterState.selectedSectors.some((sec) => {
+          const s = sec.toLowerCase();
+          return (point.sector || '').toLowerCase().includes(s) ||
+                 point.title.toLowerCase().includes(s) ||
+                 (point.sourceLayerName || '').toLowerCase().includes(s);
+        });
+        if (!matchesSector) {
+          return false;
+        }
+      }
+
+      // 4. Overall Threat level filter (if no specific category active)
+      if (!filterState.activeSpecificCategory && filterState.threatLevels.length > 0 && !filterState.threatLevels.includes(point.riskLevel)) {
+        return false;
+      }
+
+      // 5. Status filter
+      if (filterState.statuses.length > 0 && !filterState.statuses.includes(point.status)) {
+        return false;
+      }
+
+      // 6. Only critical filter
+      if (filterState.onlyCritical && point.riskLevel !== 'critico' && point.riskLevel !== 'alto') {
+        return false;
+      }
+
+      // 7. Search keyword filter
+      if (filterState.searchKeyword.trim()) {
+        const kw = filterState.searchKeyword.toLowerCase();
+        const matchesTitle = point.title.toLowerCase().includes(kw);
+        const matchesSector = point.sector.toLowerCase().includes(kw);
+        const matchesThreat = point.threatType.toLowerCase().includes(kw);
+        const matchesDesc = point.description.toLowerCase().includes(kw);
+        const matchesHead = (point.householdHead || '').toLowerCase().includes(kw);
+        const matchesPmr = (point.pmrDetails || '').toLowerCase().includes(kw);
+        if (!matchesTitle && !matchesSector && !matchesThreat && !matchesDesc && !matchesHead && !matchesPmr) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [riskPoints, filterState]);
+
+  return (
+    <DataContext.Provider
+      value={{
+        layers,
+        riskPoints,
+        loading,
+        isSyncing,
+        isOnline,
+        lastSyncTime,
+        filterState,
+        setFilterState,
+        filteredLayers,
+        filteredRiskPoints,
+        selectedPoint,
+        setSelectedPoint,
+        selectedLayer,
+        setSelectedLayer,
+        mapFlyTo,
+        setMapFlyTo,
+        addLayer,
+        updateLayer,
+        toggleLayerVisibility,
+        deleteLayer,
+        addRiskPoint,
+        updateRiskPoint,
+        deleteRiskPoint,
+        restoreDefaultData,
+        exportComunaGeoJSON,
+      }}
+    >
+      {children}
+    </DataContext.Provider>
+  );
+};
+
+export const useData = () => {
+  const context = useContext(DataContext);
+  if (!context) {
+    throw new Error('useData must be used within a DataProvider');
+  }
+  return context;
+};
+
