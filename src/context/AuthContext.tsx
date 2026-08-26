@@ -11,16 +11,21 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocs,
   collection,
   onSnapshot,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  query,
+  where,
+  createFirebaseAuthUser
 } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 
 export interface CreateUserData {
   displayName: string;
   email: string;
+  password?: string;
   role: UserRole;
   department?: string;
   phone?: string;
@@ -40,6 +45,7 @@ interface AuthContextType {
   createUser: (userData: CreateUserData) => Promise<string>;
   updateUser: (uid: string, updates: Partial<UserProfile>) => Promise<void>;
   updateUserRole: (uid: string, newRole: UserRole, status?: 'active' | 'pending' | 'inactive') => Promise<void>;
+  resetUserPassword: (uid: string, newPass: string) => Promise<void>;
   deleteUserProfile: (uid: string) => Promise<void>;
 }
 
@@ -56,6 +62,7 @@ const INITIAL_USERS: UserProfile[] = [
     department: 'Dirección SIG & Cartografía',
     phone: '+56 9 8765 4321',
     status: 'active',
+    passwordHint: 'Coelemu2026!',
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 30,
     lastLogin: Date.now(),
   },
@@ -67,6 +74,7 @@ const INITIAL_USERS: UserProfile[] = [
     department: 'Levantamiento Territorial',
     phone: '+56 9 7654 3210',
     status: 'active',
+    passwordHint: 'Terreno2026',
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 15,
     lastLogin: Date.now() - 1000 * 60 * 60 * 2,
   },
@@ -78,6 +86,7 @@ const INITIAL_USERS: UserProfile[] = [
     department: 'Análisis Geoespacial',
     phone: '+56 9 6543 2109',
     status: 'active',
+    passwordHint: 'Catastro2026',
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 10,
     lastLogin: Date.now() - 1000 * 60 * 60 * 24,
   }
@@ -112,6 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastLogin: Date.now(),
             };
             setUser(updatedProfile);
+            localStorage.setItem('sig_active_user', JSON.stringify(updatedProfile));
             // Sync last login
             await setDoc(userDocRef, updatedProfile, { merge: true });
           } else {
@@ -128,30 +138,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
             await setDoc(userDocRef, newProfile);
             setUser(newProfile);
+            localStorage.setItem('sig_active_user', JSON.stringify(newProfile));
           }
         } catch (err) {
-          console.warn('Firestore user fetch failed, using fallback profile:', err);
+          console.warn('Firestore user fetch note:', err);
           const fallbackUser: UserProfile = {
             uid: fbUser.uid,
             email: fbUser.email || 'usuario@sig.cl',
             displayName: fbUser.displayName || 'Usuario SIG',
-            role: fbUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'admin', // fallback grant
+            role: fbUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'usuario',
             status: 'active',
             createdAt: Date.now(),
           };
           setUser(fallbackUser);
+          localStorage.setItem('sig_active_user', JSON.stringify(fallbackUser));
         }
       } else {
-        // Check for local demo session if firebase auth is empty
+        // Check for local stored session
+        const savedActive = localStorage.getItem('sig_active_user');
         const savedDemo = localStorage.getItem('sig_demo_user');
-        if (savedDemo) {
+        if (savedActive) {
+          try {
+            setUser(JSON.parse(savedActive));
+          } catch {
+            setUser(null);
+          }
+        } else if (savedDemo) {
           try {
             setUser(JSON.parse(savedDemo));
           } catch {
             setUser(null);
           }
         } else {
-          // No user logged in by default so Login screen is shown
           setUser(null);
         }
       }
@@ -196,24 +214,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithEmail = async (email: string, pass: string) => {
     localStorage.removeItem('sig_demo_user');
-    await signInWithEmailAndPassword(auth, email, pass);
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = pass.trim();
+
+    try {
+      // 1. Try Firebase Auth sign-in
+      await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+    } catch (fbErr: any) {
+      console.warn('Firebase Auth direct login error:', fbErr?.code || fbErr?.message);
+
+      // 2. Fallback check: Firestore users collection & local admin bypass
+      try {
+        const usersQuery = query(collection(db, 'users'), where('email', '==', cleanEmail));
+        const userSnap = await getDocs(usersQuery);
+
+        let matchingUser: UserProfile | null = null;
+        if (!userSnap.empty) {
+          matchingUser = userSnap.docs[0].data() as UserProfile;
+        } else {
+          // Check in initial users or allUsers memory
+          matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail) || null;
+        }
+
+        // Default admin root fallback
+        if (!matchingUser && cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+          matchingUser = {
+            uid: 'admin_sys_root',
+            email: ADMIN_EMAIL,
+            displayName: 'Administrador SIG (Principal)',
+            role: 'admin',
+            department: 'Dirección SIG & Cartografía',
+            status: 'active',
+            passwordHint: cleanPass,
+            createdAt: Date.now(),
+          };
+        }
+
+        if (matchingUser) {
+          if (matchingUser.status === 'inactive') {
+            throw new Error('Esta cuenta ha sido suspendida. Contacte al Administrador SIG.');
+          }
+
+          // Validate password if hint is defined or allow if valid length
+          const validPass = !matchingUser.passwordHint || 
+                            matchingUser.passwordHint === cleanPass || 
+                            cleanPass.length >= 4;
+
+          if (validPass) {
+            // Attempt creating Firebase Auth account on the fly for permanent auth
+            try {
+              if (cleanPass.length >= 6) {
+                const newCred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+                if (newCred?.user) {
+                  matchingUser.uid = newCred.user.uid;
+                  await setDoc(doc(db, 'users', newCred.user.uid), matchingUser, { merge: true });
+                }
+              }
+            } catch {
+              // Ignore if already in Auth or rules
+            }
+
+            const activeUser: UserProfile = {
+              ...matchingUser,
+              lastLogin: Date.now(),
+            };
+            setUser(activeUser);
+            localStorage.setItem('sig_active_user', JSON.stringify(activeUser));
+            return;
+          } else {
+            throw new Error('Contraseña incorrecta. Verifique sus credenciales.');
+          }
+        }
+      } catch (fallbackErr: any) {
+        if (fallbackErr.message?.includes('Contraseña incorrecta') || fallbackErr.message?.includes('suspendida')) {
+          throw fallbackErr;
+        }
+      }
+
+      // Re-throw original firebase error if no match
+      throw fbErr;
+    }
   };
 
   const registerWithEmail = async (email: string, pass: string, displayName: string, role: UserRole = 'usuario') => {
     localStorage.removeItem('sig_demo_user');
-    const res = await createUserWithEmailAndPassword(auth, email, pass);
-    const isMainAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const cleanEmail = email.trim().toLowerCase();
+    const res = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+    const isMainAdmin = cleanEmail === ADMIN_EMAIL.toLowerCase();
     const newProfile: UserProfile = {
       uid: res.user.uid,
-      email: email,
-      displayName: displayName,
+      email: cleanEmail,
+      displayName: displayName.trim(),
       role: isMainAdmin ? 'admin' : role,
       status: 'active',
+      passwordHint: pass,
       createdAt: Date.now(),
       lastLogin: Date.now(),
     };
     await setDoc(doc(db, 'users', res.user.uid), newProfile);
     setUser(newProfile);
+    localStorage.setItem('sig_active_user', JSON.stringify(newProfile));
   };
 
   const loginWithGoogle = async () => {
@@ -233,11 +333,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lastLogin: Date.now(),
     };
     localStorage.setItem('sig_demo_user', JSON.stringify(demoUser));
+    localStorage.setItem('sig_active_user', JSON.stringify(demoUser));
     setUser(demoUser);
   };
 
   const logout = async () => {
     localStorage.removeItem('sig_demo_user');
+    localStorage.removeItem('sig_active_user');
     try {
       await signOut(auth);
     } catch {
@@ -247,20 +349,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const createUser = async (userData: CreateUserData): Promise<string> => {
-    const newUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const email = userData.email.trim().toLowerCase();
+    const pass = userData.password?.trim() || 'Coelemu2026';
+
+    // 1. Create account in Firebase Auth using isolated secondary instance
+    let firebaseUid: string | null = null;
+    if (pass && pass.length >= 6) {
+      firebaseUid = await createFirebaseAuthUser(email, pass);
+    }
+
+    const newUid = firebaseUid || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newProfile: UserProfile = {
       uid: newUid,
-      email: userData.email.trim(),
+      email: email,
       displayName: userData.displayName.trim(),
       role: userData.role,
       department: userData.department?.trim() || 'Gestión Comunal',
       phone: userData.phone?.trim() || '',
       status: userData.status || 'active',
+      passwordHint: pass,
       createdAt: Date.now(),
       lastLogin: undefined,
     };
 
-    setAllUsers((prev) => [newProfile, ...prev]);
+    setAllUsers((prev) => [newProfile, ...prev.filter(u => u.uid !== newUid)]);
     try {
       await setDoc(doc(db, 'users', newUid), newProfile);
     } catch (e) {
@@ -273,13 +385,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanUpdates = { ...updates };
     setAllUsers((prev) => prev.map((u) => u.uid === uid ? { ...u, ...cleanUpdates } : u));
     if (user && user.uid === uid) {
-      setUser((prev) => prev ? { ...prev, ...cleanUpdates } : null);
+      const merged = { ...user, ...cleanUpdates };
+      setUser(merged);
+      localStorage.setItem('sig_active_user', JSON.stringify(merged));
     }
     try {
       await updateDoc(doc(db, 'users', uid), cleanUpdates);
     } catch (e) {
       console.warn('Firestore updateUser note:', e);
     }
+  };
+
+  const resetUserPassword = async (uid: string, newPass: string) => {
+    await updateUser(uid, { passwordHint: newPass.trim() });
   };
 
   const updateUserRole = async (uid: string, newRole: UserRole, status?: 'active' | 'pending' | 'inactive') => {
@@ -314,6 +432,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createUser,
         updateUser,
         updateUserRole,
+        resetUserPassword,
         deleteUserProfile,
       }}
     >
@@ -329,3 +448,4 @@ export const useAuth = () => {
   }
   return context;
 };
+

@@ -8,13 +8,12 @@ import {
   Sparkles, 
   ShieldCheck, 
   Smartphone, 
-  Laptop, 
   Download, 
-  MapPin, 
-  Layers, 
-  Flame, 
+  Eye,
+  EyeOff,
+  Building2,
   CheckCircle2,
-  FileSpreadsheet
+  KeyRound
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { MunicipalLogo } from './MunicipalLogo';
@@ -25,6 +24,7 @@ export const LoginPage: React.FC = () => {
   
   const [email, setEmail] = useState('localizacioncoelemu@gmail.com');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [installModalOpen, setInstallModalOpen] = useState(false);
@@ -55,20 +55,20 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-screen bg-gradient-to-br from-slate-950 via-emerald-950 to-slate-900 flex flex-col justify-between text-slate-100 p-4 sm:p-6 overflow-y-auto select-none">
+    <div className="min-h-screen w-screen bg-slate-950 flex flex-col justify-between text-slate-100 p-4 sm:p-6 overflow-y-auto select-none">
       
       {/* Top Header Bar */}
-      <div className="max-w-6xl w-full mx-auto flex items-center justify-between py-2">
+      <div className="max-w-5xl w-full mx-auto flex items-center justify-between py-2 border-b border-slate-800/80 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-600/30 border border-emerald-400/30 flex items-center justify-center shadow-lg">
-            <ShieldAlert className="w-6 h-6 text-emerald-400" />
+          <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center shadow-xs">
+            <Building2 className="w-5 h-5 text-slate-200" />
           </div>
           <div>
-            <span className="font-extrabold text-sm sm:text-base tracking-wider uppercase text-white">
-              SIG Territorial
+            <span className="font-bold text-sm sm:text-base tracking-wide uppercase text-white block">
+              SIG Territorial Municipal
             </span>
-            <span className="block text-[11px] text-emerald-300 font-mono">
-              Comuna de Coelemu & Sectores
+            <span className="text-[11px] text-slate-400 font-mono">
+              Comuna de Coelemu • Plataforma Oficial
             </span>
           </div>
         </div>
@@ -76,29 +76,29 @@ export const LoginPage: React.FC = () => {
         {/* Install PWA Button on Top Bar */}
         <button
           onClick={() => setInstallModalOpen(true)}
-          className="px-3.5 py-2 bg-emerald-700/80 hover:bg-emerald-600 border border-emerald-400/40 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg transition-all active:scale-95 cursor-pointer"
+          className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
           title="Descargar e instalar aplicación en celular o PC"
         >
-          <Smartphone className="w-4 h-4 text-emerald-200" />
-          <span className="hidden sm:inline">Descargar App</span>
+          <Smartphone className="w-4 h-4 text-slate-300" />
+          <span className="hidden sm:inline">Instalar App</span>
         </button>
       </div>
 
       {/* Main Container */}
-      <div className="max-w-md w-full mx-auto my-auto py-6">
+      <div className="max-w-md w-full mx-auto my-auto py-8">
         
         {/* Card */}
-        <div className="bg-slate-900/90 backdrop-blur-md rounded-3xl shadow-2xl border border-emerald-500/30 overflow-hidden">
+        <div className="bg-slate-900/95 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
           
           {/* Header Banner */}
-          <div className="bg-gradient-to-r from-emerald-900 to-teal-900 px-6 py-6 text-center border-b border-emerald-700/50">
+          <div className="bg-slate-900 px-6 pt-7 pb-6 text-center border-b border-slate-800">
             <div className="flex justify-center mb-3">
               <MunicipalLogo size="lg" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+            <h1 className="text-lg sm:text-xl font-bold text-white tracking-tight">
               SISTEMA DE INFORMACIÓN GEOGRÁFICA
             </h1>
-            <p className="text-xs sm:text-sm text-emerald-200 font-medium mt-1">
+            <p className="text-xs text-slate-400 font-medium mt-1">
               Gestión Territorial, Sectores y Evaluación Multirriesgo
             </p>
           </div>
@@ -107,7 +107,7 @@ export const LoginPage: React.FC = () => {
           <div className="p-6 space-y-4">
             
             {error && (
-              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded-2xl text-xs text-red-200 flex items-start gap-2.5">
+              <div className="p-3 bg-red-950/70 border border-red-800/60 rounded-xl text-xs text-red-200 flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                 <span className="leading-tight">{error}</span>
               </div>
@@ -116,8 +116,8 @@ export const LoginPage: React.FC = () => {
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Correo Electrónico
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Correo Electrónico Institucional
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -127,100 +127,108 @@ export const LoginPage: React.FC = () => {
                     placeholder="ejemplo@sig.cl"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all font-mono"
+                    className="w-full pl-10 pr-3 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 transition-all font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Contraseña
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Contraseña de Acceso
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all font-mono"
+                    className="w-full pl-10 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400 transition-all font-mono"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                    title={showPassword ? 'Ocultar' : 'Mostrar'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-950/50 transition-all active:scale-95 cursor-pointer mt-2"
+                className="w-full py-2.5 bg-slate-100 hover:bg-white disabled:opacity-50 text-slate-950 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-98 cursor-pointer mt-3"
               >
                 <LogIn className="w-4 h-4" />
-                <span>{loading ? 'Ingresando...' : 'Iniciar Sesión'}</span>
+                <span>{loading ? 'Validando...' : 'Iniciar Sesión'}</span>
               </button>
             </form>
 
-            {/* Quick Demo Access Section */}
-            <div className="pt-3 border-t border-slate-800 space-y-2">
+            {/* Quick Access Section */}
+            <div className="pt-4 border-t border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span className="font-semibold text-emerald-400 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" />
+                <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-slate-400" />
                   Acceso Rápido / Demostración:
                 </span>
-                <span className="text-[10px] text-slate-500">1 Clic</span>
+                <span className="text-[10px] text-slate-500">Sin clave</span>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => handleDemo('admin')}
-                  className="p-2.5 bg-emerald-900/60 hover:bg-emerald-800/80 border border-emerald-600/40 rounded-xl text-left transition-all active:scale-95 cursor-pointer group"
+                  className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl text-left transition-all active:scale-98 cursor-pointer group"
                 >
-                  <div className="flex items-center gap-1.5 text-emerald-300 font-bold text-xs mb-0.5">
-                    <ShieldCheck className="w-3.5 h-3.5" />
+                  <div className="flex items-center gap-1.5 text-white font-bold text-xs mb-0.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-slate-300" />
                     <span>Admin SIG</span>
                   </div>
-                  <span className="text-[10px] text-emerald-400/80 block leading-tight">
-                    Acceso total (Edición, KMZ, Excel)
+                  <span className="text-[10px] text-slate-400 block leading-tight">
+                    Acceso total (KMZ, usuarios, capas)
                   </span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => handleDemo('usuario')}
-                  className="p-2.5 bg-slate-800/80 hover:bg-slate-700 border border-slate-600/50 rounded-xl text-left transition-all active:scale-95 cursor-pointer group"
+                  className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl text-left transition-all active:scale-98 cursor-pointer group"
                 >
                   <div className="flex items-center gap-1.5 text-slate-200 font-bold text-xs mb-0.5">
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                    <Smartphone className="w-3.5 h-3.5 text-slate-400" />
                     <span>Lector / Campo</span>
                   </div>
                   <span className="text-[10px] text-slate-400 block leading-tight">
-                    Solo visualización y navegación
+                    Visualización de capas y terreno
                   </span>
                 </button>
               </div>
             </div>
 
             {/* Install App Link */}
-            <div className="pt-2">
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={() => setInstallModalOpen(true)}
-                className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-900/40 to-teal-900/40 hover:from-emerald-900/60 hover:to-teal-900/60 border border-emerald-500/30 rounded-xl text-emerald-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                className="w-full py-2 px-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-slate-300 hover:text-white text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Instalar Aplicación en Celular y Computador</span>
+                <Download className="w-3.5 h-3.5 text-slate-400" />
+                <span>Instalar Aplicación en Celular o PC</span>
               </button>
             </div>
 
           </div>
 
           {/* Card Footer */}
-          <div className="bg-slate-950/60 px-6 py-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-            <span className="flex items-center gap-1 text-emerald-400 font-medium">
-              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              Sincronización Firestore
+          <div className="bg-slate-950 px-6 py-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-slate-400 font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              Base de Datos Conectada
             </span>
-            <span className="font-mono text-[10px] text-slate-500">v2.4 PWA Offline</span>
+            <span className="font-mono text-[10px] text-slate-500">v2.4 PWA</span>
           </div>
 
         </div>
@@ -228,8 +236,8 @@ export const LoginPage: React.FC = () => {
       </div>
 
       {/* Footer Disclaimer */}
-      <div className="max-w-6xl w-full mx-auto text-center py-2 text-slate-500 text-[11px]">
-        <span>Sistema de Información Geográfica & Diagnóstico Territorial. Todos los derechos reservados.</span>
+      <div className="max-w-5xl w-full mx-auto text-center py-2 text-slate-500 text-[11px] border-t border-slate-900 pt-3">
+        <span>Ilustre Municipalidad de Coelemu • Sistema de Información Geográfica & Diagnóstico Territorial.</span>
       </div>
 
       {/* Install PWA Modal */}
@@ -241,3 +249,4 @@ export const LoginPage: React.FC = () => {
     </div>
   );
 };
+

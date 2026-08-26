@@ -35,6 +35,7 @@ export interface UserProfile {
   department?: string;
   phone?: string;
   status: 'active' | 'pending' | 'inactive';
+  passwordHint?: string;
   createdAt: number;
   lastLogin?: number;
 }
