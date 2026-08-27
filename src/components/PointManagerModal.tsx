@@ -16,7 +16,8 @@ import {
   CheckCircle2,
   Accessibility,
   Waves,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -48,8 +49,9 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
   defaultSector,
   defaultTitle,
 }) => {
-  const { addRiskPoint, updateRiskPoint, setMapFlyTo, layers, riskPoints, filterState } = useData();
-  const { user } = useAuth();
+  const { addRiskPoint, updateRiskPoint, deleteRiskPoint, setMapFlyTo, layers, riskPoints, filterState } = useData();
+  const { user, isAdmin } = useAuth();
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [title, setTitle] = useState('');
   const [sector, setSector] = useState('Caravanchel');
@@ -818,23 +820,48 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
           </div>
 
           {/* Modal Footer Buttons */}
-          <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-            <div className="text-[11px] text-slate-500 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Se guardará en la base de datos para exportar a Excel y PDF</span>
-            </div>
+          <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
+              {isAdmin && editingPoint && (
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={async () => {
+                    if (confirm(`¿Estás seguro de eliminar permanentemente este punto de riesgo "${editingPoint.title}"?`)) {
+                      setIsDeleting(true);
+                      try {
+                        await deleteRiskPoint(editingPoint.id);
+                        onClose();
+                      } finally {
+                        setIsDeleting(false);
+                      }
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Eliminar este punto de la base de datos"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isDeleting ? 'Eliminando...' : 'Eliminar Punto'}</span>
+                </button>
+              )}
+              <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Base de datos en la nube</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold transition-colors cursor-pointer"
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold transition-colors cursor-pointer text-xs"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                disabled={isSaving}
-                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
+                disabled={isSaving || isDeleting}
+                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer text-xs"
               >
                 <Save className="w-4 h-4" />
                 <span>{isSaving ? 'Guardando...' : (editingPoint ? 'Actualizar Evaluación' : 'Guardar Punto en Base de Datos')}</span>

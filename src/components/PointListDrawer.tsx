@@ -41,15 +41,36 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
   onAddNewPoint,
   onOpenExcel,
 }) => {
-  const { filteredRiskPoints, selectedPoint, setSelectedPoint, setMapFlyTo, deleteRiskPoint } = useData();
+  const { 
+    filteredRiskPoints, 
+    riskPoints,
+    selectedPoint, 
+    setSelectedPoint, 
+    setMapFlyTo, 
+    deleteRiskPoint,
+    deleteAllRiskPoints
+  } = useData();
   const { user, isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   if (!isOpen) return null;
 
   const handleSelectPoint = (point: RiskPoint) => {
     setSelectedPoint(point);
     setMapFlyTo({ lat: point.coordinates.lat, lng: point.coordinates.lng, zoom: 16 });
+  };
+
+  const handleDeleteAll = async () => {
+    if (!isAdmin) return;
+    if (confirm(`¿Estás seguro de eliminar TODOS los ${riskPoints.length} puntos de riesgo registrados en la base de datos? Esta acción no se puede deshacer.`)) {
+      setIsDeletingAll(true);
+      try {
+        await deleteAllRiskPoints();
+      } finally {
+        setIsDeletingAll(false);
+      }
+    }
   };
 
   const displayedPoints = filteredRiskPoints.filter(p => {
@@ -264,7 +285,19 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
 
       {/* Footer */}
       <div className="bg-slate-50 border-t border-slate-200 p-2.5 text-center text-xs text-slate-500 flex items-center justify-between px-4">
-        <span>Base de datos sincronizada</span>
+        {isAdmin && riskPoints.length > 0 ? (
+          <button
+            onClick={handleDeleteAll}
+            disabled={isDeletingAll}
+            className="text-red-600 hover:text-red-700 font-bold text-[11px] flex items-center gap-1 hover:underline cursor-pointer"
+            title="Eliminar todos los puntos registrados en la base de datos"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{isDeletingAll ? 'Eliminando...' : 'Eliminar Todos los Puntos'}</span>
+          </button>
+        ) : (
+          <span>Base de datos sincronizada</span>
+        )}
         {onOpenExcel && (
           <button
             onClick={onOpenExcel}

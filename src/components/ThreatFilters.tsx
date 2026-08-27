@@ -13,15 +13,27 @@ import {
   ChevronDown,
   Home,
   Accessibility,
-  Waves
+  Waves,
+  Trash2
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { ThreatCategory, ThreatLevel } from '../types';
 
 export const ThreatFilters: React.FC = () => {
-  const { filterState, setFilterState, layers, riskPoints } = useData();
+  const { 
+    filterState, 
+    setFilterState, 
+    layers, 
+    riskPoints, 
+    deleteRiskPointsBySector, 
+    deleteAllRiskPoints,
+    deleteAllLayers
+  } = useData();
+  const { isAdmin } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [showSectorsList, setShowSectorsList] = useState(false);
+  const [isDeletingSector, setIsDeletingSector] = useState<string | null>(null);
 
   // Top category configuration strictly following PDF guidelines
   const categoriesConfig: { id: ThreatCategory | 'pmr'; label: string; icon: any; color: string; activeBg: string }[] = [
@@ -81,6 +93,19 @@ export const ThreatFilters: React.FC = () => {
 
     return Array.from(sectorSet).sort((a, b) => a.localeCompare(b));
   }, [layers, riskPoints]);
+
+  // Automatically prune selected sectors if they are no longer in availableSectors (e.g. layer or points deleted)
+  React.useEffect(() => {
+    if (filterState.selectedSectors.length > 0) {
+      const valid = filterState.selectedSectors.filter(s => availableSectors.includes(s));
+      if (valid.length !== filterState.selectedSectors.length) {
+        setFilterState(prev => ({
+          ...prev,
+          selectedSectors: valid,
+        }));
+      }
+    }
+  }, [availableSectors, filterState.selectedSectors, setFilterState]);
 
   const handleCategoryClick = (catId: ThreatCategory | 'pmr') => {
     if (catId === 'pmr') {
@@ -281,34 +306,54 @@ export const ThreatFilters: React.FC = () => {
                   </div>
 
                   {/* Actions Header: Select All / Clear */}
-                  {availableSectors.length > 1 && (
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const allSelected = availableSectors.every(s => filterState.selectedSectors.includes(s));
-                          setFilterState(prev => ({
-                            ...prev,
-                            selectedSectors: allSelected ? [] : [...availableSectors]
-                          }));
-                        }}
-                        className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
-                      >
-                        {availableSectors.every(s => filterState.selectedSectors.includes(s))
-                          ? 'Deseleccionar todos'
-                          : 'Seleccionar todos'}
-                      </button>
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 text-[11px] gap-2">
+                    <div className="flex items-center gap-2">
+                      {availableSectors.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allSelected = availableSectors.every(s => filterState.selectedSectors.includes(s));
+                            setFilterState(prev => ({
+                              ...prev,
+                              selectedSectors: allSelected ? [] : [...availableSectors]
+                            }));
+                          }}
+                          className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                        >
+                          {availableSectors.every(s => filterState.selectedSectors.includes(s))
+                            ? 'Deseleccionar todos'
+                            : 'Seleccionar todos'}
+                        </button>
+                      )}
                       {filterState.selectedSectors.length > 0 && (
                         <button
                           type="button"
                           onClick={() => setFilterState(prev => ({ ...prev, selectedSectors: [] }))}
-                          className="text-red-600 hover:text-red-700 font-medium cursor-pointer"
+                          className="text-amber-700 hover:text-amber-800 font-medium cursor-pointer"
                         >
-                          Limpiar
+                          Limpiar filtro
                         </button>
                       )}
                     </div>
-                  )}
+
+                    {isAdmin && availableSectors.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (confirm(`¿Eliminar TODOS los sectores y puntos registrados en la base de datos (${availableSectors.length} sectores)? Esta acción borrará los datos de todos los dispositivos.`)) {
+                            await deleteAllRiskPoints();
+                            await deleteAllLayers();
+                            setShowSectorsList(false);
+                          }
+                        }}
+                        className="text-red-600 hover:text-red-800 font-bold flex items-center gap-1 cursor-pointer hover:underline text-[10px]"
+                        title="Eliminar todos los sectores y puntos del sistema"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Borrar todo</span>
+                      </button>
+                    )}
+                  </div>
 
                   <div className="max-h-64 sm:max-h-60 overflow-y-auto space-y-1.5 pr-1">
                     {availableSectors.length === 0 ? (
@@ -322,23 +367,51 @@ export const ThreatFilters: React.FC = () => {
                     ) : (
                       availableSectors.map((sec) => {
                         const isSelected = filterState.selectedSectors.includes(sec);
+                        const isDeletingThis = isDeletingSector === sec;
                         return (
-                          <button
+                          <div
                             key={sec}
-                            onClick={() => toggleSector(sec)}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center justify-between transition-all cursor-pointer ${
+                            className={`rounded-xl flex items-center justify-between transition-all border ${
                               isSelected
-                                ? 'bg-indigo-50 text-indigo-900 font-bold border border-indigo-200 shadow-xs'
-                                : 'text-slate-700 hover:bg-slate-50 border border-slate-100'
+                                ? 'bg-indigo-50 text-indigo-900 font-bold border-indigo-200 shadow-xs'
+                                : 'text-slate-700 hover:bg-slate-50 border-slate-100'
                             }`}
                           >
-                            <span className="truncate pr-2 font-medium">{sec}</span>
-                            <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
-                              isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-300 bg-white'
-                            }`}>
-                              {isSelected && <Check className="w-3.5 h-3.5" />}
-                            </div>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleSector(sec)}
+                              className="flex-1 text-left px-3 py-2.5 flex items-center justify-between cursor-pointer min-w-0"
+                            >
+                              <span className="truncate pr-2 font-medium">{sec}</span>
+                              <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+                                isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-300 bg-white'
+                              }`}>
+                                {isSelected && <Check className="w-3.5 h-3.5" />}
+                              </div>
+                            </button>
+
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                disabled={Boolean(isDeletingSector)}
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`¿Estás seguro de eliminar el sector "${sec}" y todos sus puntos asociados?`)) {
+                                    setIsDeletingSector(sec);
+                                    try {
+                                      await deleteRiskPointsBySector(sec);
+                                    } finally {
+                                      setIsDeletingSector(null);
+                                    }
+                                  }
+                                }}
+                                className="px-2.5 py-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-r-xl transition-colors cursor-pointer flex-shrink-0"
+                                title={`Eliminar sector "${sec}" y todos sus puntos`}
+                              >
+                                <Trash2 className={`w-3.5 h-3.5 ${isDeletingThis ? 'animate-spin text-red-600' : ''}`} />
+                              </button>
+                            )}
+                          </div>
                         );
                       })
                     )}

@@ -43,7 +43,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     setSelectedPoint, 
     mapFlyTo, 
     setMapFlyTo,
-    filterState
+    filterState,
+    deleteRiskPoint
   } = useData();
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -70,11 +71,18 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       }
     };
 
+    (window as any).handleDeleteExistingPoint = async (pointId: string) => {
+      if (confirm('¿Estás seguro de eliminar este punto de riesgo de la base de datos?')) {
+        await deleteRiskPoint(pointId);
+      }
+    };
+
     return () => {
       delete (window as any).handleEvaluateKmzPoint;
       delete (window as any).handleEditExistingPoint;
+      delete (window as any).handleDeleteExistingPoint;
     };
-  }, [onMapClickAddPoint, onSelectPointDetail, filteredRiskPoints]);
+  }, [onMapClickAddPoint, onSelectPointDetail, filteredRiskPoints, deleteRiskPoint]);
 
   // Initialize Map
   useEffect(() => {
@@ -417,12 +425,21 @@ export const MapViewer: React.FC<MapViewerProps> = ({
               ${point.contactPhone ? `<span class="font-bold text-emerald-700">📞 ${escapeHtml(point.contactPhone)}</span>` : ''}
             </div>
 
-            <button
-              onclick="window.handleEditExistingPoint('${point.id}')"
-              class="w-full mt-1 py-1.5 px-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
-            >
-              ✏️ Modificar Evaluación de Riesgos
-            </button>
+            <div class="flex items-center gap-1.5 mt-1">
+              <button
+                onclick="window.handleEditExistingPoint('${point.id}')"
+                class="flex-1 py-1.5 px-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
+              >
+                ✏️ Modificar
+              </button>
+              <button
+                onclick="window.handleDeleteExistingPoint('${point.id}')"
+                class="py-1.5 px-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer"
+                title="Eliminar este punto de la base de datos"
+              >
+                🗑️ Eliminar
+              </button>
+            </div>
           </div>
         </div>
       `;

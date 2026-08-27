@@ -53,10 +53,13 @@ interface DataContextType {
   updateLayer: (id: string, updates: Partial<KmzLayer>) => Promise<void>;
   toggleLayerVisibility: (id: string) => Promise<void>;
   deleteLayer: (id: string) => Promise<void>;
+  deleteAllLayers: () => Promise<void>;
   syncAllLayersToCloud: () => Promise<number>;
   addRiskPoint: (pointData: Omit<RiskPoint, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'createdByName'>) => Promise<string>;
   updateRiskPoint: (id: string, updates: Partial<RiskPoint>) => Promise<void>;
   deleteRiskPoint: (id: string) => Promise<void>;
+  deleteAllRiskPoints: () => Promise<void>;
+  deleteRiskPointsBySector: (sectorName: string) => Promise<void>;
   restoreDefaultData: () => Promise<void>;
   exportComunaGeoJSON: () => string;
 }
@@ -303,17 +306,50 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteLayer = async (id: string) => {
     setIsSyncing(true);
     const targetLayer = layers.find((l) => l.id === id);
+    const layerName = targetLayer?.name;
+    const layerSector = targetLayer?.sector;
+
+    // 1. Remove layer from state
     setLayers((prev) => prev.filter((l) => l.id !== id));
     if (selectedLayer?.id === id) setSelectedLayer(null);
     
-    // Remove from local IndexedDB
+    // 2. Cascade delete points associated with this KMZ layer
+    const pointsToDelete = riskPoints.filter((p) => {
+      if (p.sourceLayerId && p.sourceLayerId === id) return true;
+      if (layerName && p.sourceLayerName && p.sourceLayerName === layerName) return true;
+      if (layerSector && p.sector && p.sector.trim().toLowerCase() === layerSector.trim().toLowerCase()) {
+        const otherLayersWithSameSector = layers.filter(other => other.id !== id && other.sector?.trim().toLowerCase() === layerSector.trim().toLowerCase());
+        if (otherLayersWithSameSector.length === 0) return true;
+      }
+      if (layerName && p.sector && p.sector.trim().toLowerCase() === layerName.trim().toLowerCase()) {
+        const otherLayersWithSameName = layers.filter(other => other.id !== id && other.name.trim().toLowerCase() === layerName.trim().toLowerCase());
+        if (otherLayersWithSameName.length === 0) return true;
+      }
+      return false;
+    });
+
+    if (pointsToDelete.length > 0) {
+      const deleteIds = new Set(pointsToDelete.map(p => p.id));
+      setRiskPoints((prev) => prev.filter(p => !deleteIds.has(p.id)));
+      if (selectedPoint && deleteIds.has(selectedPoint.id)) setSelectedPoint(null);
+      
+      for (const pt of pointsToDelete) {
+        try {
+          await deleteDoc(doc(db, 'riskPoints', pt.id));
+        } catch (err) {
+          console.warn('Error removing associated point from Firestore:', err);
+        }
+      }
+    }
+
+    // 3. Remove from local IndexedDB & LocalStorage
     try {
       await deleteLayerFromLocalDB(id);
     } catch (e) {
       console.warn('Local DB layer delete error:', e);
     }
 
-    // Remove from Firestore (and any chunks)
+    // 4. Remove from Firestore (and any chunks)
     try {
       await deleteLayerFromFirestore(id, targetLayer?.totalChunks);
     } catch (err) {
@@ -322,6 +358,87 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsSyncing(false);
       setLastSyncTime(Date.now());
     }
+  };
+
+  const deleteAllLayers = async () => {
+    setIsSyncing(true);
+    const existingLayers = [...layers];
+    setLayers([]);
+    setSelectedLayer(null);
+
+    // Clear local storage / indexedDB
+    try {
+      await clearAllLocalLayers();
+    } catch (e) {
+      console.warn('Error clearing local layers DB:', e);
+    }
+
+    // Delete in Firestore
+    for (const layer of existingLayers) {
+      try {
+        await deleteLayerFromFirestore(layer.id, layer.totalChunks);
+      } catch (err) {
+        console.warn('Error deleting layer from Firestore:', err);
+      }
+    }
+
+    setIsSyncing(false);
+    setLastSyncTime(Date.now());
+  };
+
+  const deleteAllRiskPoints = async () => {
+    setIsSyncing(true);
+    const existingPoints = [...riskPoints];
+    setRiskPoints([]);
+    setSelectedPoint(null);
+
+    try {
+      localStorage.removeItem('sig_cached_points');
+    } catch (e) {
+      // ignore
+    }
+
+    for (const p of existingPoints) {
+      try {
+        await deleteDoc(doc(db, 'riskPoints', p.id));
+      } catch (err) {
+        console.warn('Error deleting risk point from Firestore:', err);
+      }
+    }
+
+    setIsSyncing(false);
+    setLastSyncTime(Date.now());
+  };
+
+  const deleteRiskPointsBySector = async (sectorName: string) => {
+    if (!sectorName) return;
+    setIsSyncing(true);
+    const s = sectorName.trim().toLowerCase();
+    const pointsToDelete = riskPoints.filter(p => (p.sector || '').trim().toLowerCase() === s || (p.title || '').trim().toLowerCase() === s);
+    const deleteIds = new Set(pointsToDelete.map(p => p.id));
+
+    setRiskPoints(prev => prev.filter(p => !deleteIds.has(p.id)));
+    if (selectedPoint && deleteIds.has(selectedPoint.id)) setSelectedPoint(null);
+
+    // Delete matching points from Firestore
+    for (const pt of pointsToDelete) {
+      try {
+        await deleteDoc(doc(db, 'riskPoints', pt.id));
+      } catch (err) {
+        console.warn('Error deleting sector point from Firestore:', err);
+      }
+    }
+
+    // Also delete any matching layers by sector or name
+    const layersToDelete = layers.filter(l => (l.sector || '').trim().toLowerCase() === s || l.name.trim().toLowerCase() === s);
+    if (layersToDelete.length > 0) {
+      for (const layer of layersToDelete) {
+        await deleteLayer(layer.id);
+      }
+    }
+
+    setIsSyncing(false);
+    setLastSyncTime(Date.now());
   };
 
   /**
@@ -670,10 +787,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateLayer,
         toggleLayerVisibility,
         deleteLayer,
+        deleteAllLayers,
         syncAllLayersToCloud,
         addRiskPoint,
         updateRiskPoint,
         deleteRiskPoint,
+        deleteAllRiskPoints,
+        deleteRiskPointsBySector,
         restoreDefaultData,
         exportComunaGeoJSON,
       }}

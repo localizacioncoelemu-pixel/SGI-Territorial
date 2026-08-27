@@ -39,7 +39,17 @@ interface LayerManagerProps {
 }
 
 export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) => {
-  const { layers, addLayer, updateLayer, toggleLayerVisibility, deleteLayer, setMapFlyTo, syncAllLayersToCloud, isSyncing } = useData();
+  const { 
+    layers, 
+    addLayer, 
+    updateLayer, 
+    toggleLayerVisibility, 
+    deleteLayer, 
+    deleteAllLayers,
+    setMapFlyTo, 
+    syncAllLayersToCloud, 
+    isSyncing 
+  } = useData();
   const { user, isAdmin } = useAuth();
 
   const [isUploading, setIsUploading] = useState(false);
@@ -140,12 +150,27 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
       const layerName = layerToDelete.name;
       await deleteLayer(layerToDelete.id);
       setLayerToDelete(null);
-      showNotification(`Capa "${layerName}" eliminada correctamente del almacenamiento.`);
+      showNotification(`Capa "${layerName}" y sus elementos asociados fueron eliminados correctamente.`);
     } catch (err: any) {
       console.error('Error deleting layer:', err);
       showNotification(err.message || 'Error al eliminar la capa.', true);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteAllLayers = async () => {
+    if (!isAdmin) return;
+    if (confirm(`¿Estás seguro de eliminar TODAS las ${layers.length} capas KMZ y sus puntos asociados del sistema? Esta acción se sincronizará con todos los dispositivos.`)) {
+      setIsDeleting(true);
+      try {
+        await deleteAllLayers();
+        showNotification('Todas las capas KMZ y sus sectores han sido eliminados correctamente.');
+      } catch (err: any) {
+        showNotification(err.message || 'Error al eliminar todas las capas.', true);
+      } finally {
+        setIsDeleting(false);
+      }
     }
   };
 
@@ -338,16 +363,31 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                   </div>
                 </div>
 
-                <button
-                  id="btn-force-cloud-sync"
-                  onClick={handleForceSync}
-                  disabled={isManualSyncing || isSyncing}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer ml-auto"
-                  title="Forzar actualización de todas las capas locales a la nube"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isManualSyncing || isSyncing ? 'Sincronizando...' : 'Sincronizar con la Nube'}</span>
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  {isAdmin && layers.length > 0 && (
+                    <button
+                      id="btn-delete-all-layers"
+                      onClick={handleDeleteAllLayers}
+                      disabled={isDeleting}
+                      className="px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Eliminar todas las capas KMZ cargadas y sus puntos asociados"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isDeleting ? 'Eliminando...' : 'Eliminar Todas las Capas'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    id="btn-force-cloud-sync"
+                    onClick={handleForceSync}
+                    disabled={isManualSyncing || isSyncing}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                    title="Forzar actualización de todas las capas locales a la nube"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isManualSyncing || isSyncing ? 'Sincronizando...' : 'Sincronizar con la Nube'}</span>
+                  </button>
+                </div>
               </div>
 
               {layers.length === 0 ? (
@@ -742,6 +782,9 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                 </p>
                 <p className="text-slate-500 text-[11px]">
                   Archivo: {layerToDelete.filename} ({layerToDelete.featureCount} elementos geográficos)
+                </p>
+                <p className="text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200 text-[11px] font-medium mt-1">
+                  Se limpiarán también los puntos y sectores asociados a esta capa en el filtro territorial de todos los dispositivos.
                 </p>
               </div>
 
