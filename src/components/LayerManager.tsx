@@ -24,7 +24,9 @@ import {
   Home,
   Tag,
   Search,
-  Edit3
+  Edit3,
+  Cloud,
+  CloudCheck
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -37,10 +39,11 @@ interface LayerManagerProps {
 }
 
 export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) => {
-  const { layers, addLayer, updateLayer, toggleLayerVisibility, deleteLayer, setMapFlyTo } = useData();
+  const { layers, addLayer, updateLayer, toggleLayerVisibility, deleteLayer, setMapFlyTo, syncAllLayersToCloud, isSyncing } = useData();
   const { user, isAdmin } = useAuth();
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'list' | 'upload'>('list');
@@ -143,6 +146,19 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
       showNotification(err.message || 'Error al eliminar la capa.', true);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleForceSync = async () => {
+    setIsManualSyncing(true);
+    try {
+      const count = await syncAllLayersToCloud();
+      showNotification(`Sincronización en la nube completada. ${count} capa(s) actualizadas en Firebase para todos los equipos.`);
+    } catch (err: any) {
+      console.error('Error in manual sync:', err);
+      showNotification(`Error al sincronizar con la nube: ${err.message || err}`, true);
+    } finally {
+      setIsManualSyncing(false);
     }
   };
 
@@ -306,6 +322,34 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
           {/* TAB 1: LIST LAYERS */}
           {activeTab === 'list' && (
             <div className="space-y-3">
+              {/* Cloud Sync Status Banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0">
+                    <Cloud className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-emerald-900 block leading-tight">
+                      Sincronización en la Nube Firebase Activa
+                    </span>
+                    <span className="text-[11px] text-emerald-700 block leading-tight mt-0.5">
+                      Las capas cargadas se sincronizan automáticamente entre todos los celulares, tablets y PCs conectados.
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  id="btn-force-cloud-sync"
+                  onClick={handleForceSync}
+                  disabled={isManualSyncing || isSyncing}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer ml-auto"
+                  title="Forzar actualización de todas las capas locales a la nube"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || isSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isManualSyncing || isSyncing ? 'Sincronizando...' : 'Sincronizar con la Nube'}</span>
+                </button>
+              </div>
+
               {layers.length === 0 ? (
                 <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-300 p-6">
                   <Layers className="w-12 h-12 text-slate-400 mx-auto mb-2 opacity-60" />

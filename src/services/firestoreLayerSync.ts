@@ -9,106 +9,178 @@ import {
   query, 
   where 
 } from '../lib/firebase';
-import { KmzLayer, GeoJsonFeature } from '../types';
+import { KmzLayer, GeoJsonCollection, GeoJsonFeature } from '../types';
 import { sanitizeForFirestore } from './layerStorage';
 
-const MAX_DIRECT_DOC_BYTES = 700000; // ~700 KB safe limit for Firestore (1MB max)
-const FEATURES_PER_CHUNK = 60; // Max features per chunk
+// Firestore single document limit is 1MB (~1,048,576 bytes).
+// We set a conservative string chunk limit of 500 KB (500,000 chars) for guaranteed delivery.
+const MAX_DIRECT_STRING_CHARS = 500000;
+const CHUNK_STRING_CHARS = 450000;
 
 /**
  * Saves a KMZ layer to Firestore safely.
- * If the layer's GeoJSON payload exceeds Firestore's document size limit,
- * it splits features into chunks in the 'layer_chunks' collection so that
- * no upload ever fails and all connected devices receive the complete layer.
+ * GeoJSON contains nested coordinate arrays (e.g. [[lng, lat]] or [[[lng, lat]]])
+ * which are rejected by Firestore's document model ("Nested arrays are not supported").
+ * We serialize the GeoJSON into a structured string payload, splitting into chunks in
+ * 'layer_chunks' if the file is very large.
  */
 export async function saveLayerToFirestore(layer: KmzLayer): Promise<void> {
   const sanitized = sanitizeForFirestore(layer);
-  const jsonStr = JSON.stringify(sanitized);
+  const geojsonObj = sanitized.geojson || { type: 'FeatureCollection', features: [] };
+  const geoJsonString = JSON.stringify(geojsonObj);
 
-  // Check if it fits in a single document
-  if (jsonStr.length < MAX_DIRECT_DOC_BYTES && sanitized.geojson.features.length <= 150) {
+  // Common metadata object without the raw nested geojson object
+  const metadata = {
+    id: sanitized.id,
+    name: sanitized.name || 'Capa Territorial',
+    filename: sanitized.filename || 'capa.kmz',
+    category: sanitized.category || 'general',
+    sector: sanitized.sector || null,
+    threatType: sanitized.threatType || 'Capa Territorial',
+    threatLevel: sanitized.threatLevel || 'medio',
+    color: sanitized.color || '#15803D',
+    opacity: typeof sanitized.opacity === 'number' ? sanitized.opacity : 0.85,
+    isVisible: sanitized.isVisible !== false,
+    featureCount: sanitized.featureCount || (geojsonObj.features ? geojsonObj.features.length : 0),
+    bounds: sanitized.bounds || null,
+    description: sanitized.description || '',
+    uploadedBy: sanitized.uploadedBy || 'anon',
+    uploadedByName: sanitized.uploadedByName || 'Usuario Comunal',
+    createdAt: sanitized.createdAt || Date.now(),
+    fileSize: sanitized.fileSize || 0,
+    updatedAt: Date.now(),
+  };
+
+  // Case 1: Standard / Medium layer fits directly in one document
+  if (geoJsonString.length <= MAX_DIRECT_STRING_CHARS) {
     const mainDoc = {
-      ...sanitized,
+      ...metadata,
       isChunked: false,
       totalChunks: 0,
-      updatedAt: Date.now(),
+      geoJsonString: geoJsonString,
     };
     await setDoc(doc(db, 'layers', sanitized.id), mainDoc);
     return;
   }
 
-  // Layer is large -> Split features into chunks
-  const allFeatures = sanitized.geojson.features || [];
-  const totalChunks = Math.ceil(allFeatures.length / FEATURES_PER_CHUNK);
+  // Case 2: Very large KMZ layer (>500KB) -> Split GeoJSON string across chunks
+  const totalChunks = Math.ceil(geoJsonString.length / CHUNK_STRING_CHARS);
 
-  // 1. Write all feature chunks to 'layer_chunks'
+  // 1. Write chunks in parallel to 'layer_chunks'
+  const chunkWrites: Promise<void>[] = [];
   for (let i = 0; i < totalChunks; i++) {
-    const chunkFeatures = allFeatures.slice(i * FEATURES_PER_CHUNK, (i + 1) * FEATURES_PER_CHUNK);
+    const chunkData = geoJsonString.substring(i * CHUNK_STRING_CHARS, (i + 1) * CHUNK_STRING_CHARS);
     const chunkDocId = `${sanitized.id}_chunk_${i}`;
-    await setDoc(doc(db, 'layer_chunks', chunkDocId), {
-      layerId: sanitized.id,
-      chunkIndex: i,
-      totalChunks: totalChunks,
-      features: chunkFeatures,
-      updatedAt: Date.now(),
-    });
+    chunkWrites.push(
+      setDoc(doc(db, 'layer_chunks', chunkDocId), {
+        layerId: sanitized.id,
+        chunkIndex: i,
+        totalChunks: totalChunks,
+        chunkData: chunkData,
+        updatedAt: Date.now(),
+      })
+    );
   }
+  await Promise.all(chunkWrites);
 
-  // 2. Write main metadata layer doc (with empty features array)
-  const mainDoc: KmzLayer = {
-    ...sanitized,
+  // 2. Write main metadata layer doc in 'layers'
+  const mainDoc = {
+    ...metadata,
     isChunked: true,
     totalChunks: totalChunks,
-    updatedAt: Date.now(),
-    geojson: {
-      type: 'FeatureCollection',
-      features: [], // Features stored in chunks
-    },
+    geoJsonString: '', // Empty in main doc since chunks store payload
   };
 
   await setDoc(doc(db, 'layers', sanitized.id), mainDoc);
 }
 
 /**
- * Reconstructs a full KmzLayer from Firestore doc, fetching chunks if necessary
+ * Reconstructs a full KmzLayer from Firestore doc, resolving chunks or JSON strings
  */
-export async function resolveFullLayerFromFirestore(layerData: KmzLayer): Promise<KmzLayer> {
-  if (!layerData.isChunked || !layerData.totalChunks || layerData.totalChunks <= 0) {
-    return layerData;
+export async function resolveFullLayerFromFirestore(data: any): Promise<KmzLayer> {
+  if (!data || !data.id) {
+    return data;
   }
 
-  // Fetch all chunks in parallel
-  const chunkPromises: Promise<any>[] = [];
-  for (let i = 0; i < layerData.totalChunks; i++) {
-    const chunkDocId = `${layerData.id}_chunk_${i}`;
-    chunkPromises.push(getDoc(doc(db, 'layer_chunks', chunkDocId)));
-  }
+  let resolvedGeojson: GeoJsonCollection = {
+    type: 'FeatureCollection',
+    features: [],
+  };
 
   try {
-    const chunkSnapshots = await Promise.all(chunkPromises);
-    const assembledFeatures: GeoJsonFeature[] = [];
-
-    chunkSnapshots.forEach((snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data && Array.isArray(data.features)) {
-          assembledFeatures.push(...data.features);
-        }
+    // 1. If layer was chunked into 'layer_chunks'
+    if (data.isChunked && data.totalChunks && data.totalChunks > 0) {
+      const chunkPromises: Promise<any>[] = [];
+      for (let i = 0; i < data.totalChunks; i++) {
+        const chunkDocId = `${data.id}_chunk_${i}`;
+        chunkPromises.push(getDoc(doc(db, 'layer_chunks', chunkDocId)));
       }
-    });
 
-    return {
-      ...layerData,
-      geojson: {
-        type: 'FeatureCollection',
-        features: assembledFeatures,
-      },
-      featureCount: assembledFeatures.length,
-    };
+      const chunkSnapshots = await Promise.all(chunkPromises);
+      const stringParts: string[] = [];
+      const legacyFeatures: GeoJsonFeature[] = [];
+
+      chunkSnapshots.forEach((snap) => {
+        if (snap.exists()) {
+          const chunkData = snap.data();
+          if (chunkData) {
+            if (typeof chunkData.chunkData === 'string') {
+              stringParts.push(chunkData.chunkData);
+            } else if (Array.isArray(chunkData.features)) {
+              // Backward compatibility with legacy feature chunking
+              legacyFeatures.push(...chunkData.features);
+            }
+          }
+        }
+      });
+
+      if (stringParts.length > 0) {
+        const fullString = stringParts.join('');
+        resolvedGeojson = JSON.parse(fullString);
+      } else if (legacyFeatures.length > 0) {
+        resolvedGeojson = {
+          type: 'FeatureCollection',
+          features: legacyFeatures,
+        };
+      }
+    } 
+    // 2. If layer was stored as direct geoJsonString
+    else if (typeof data.geoJsonString === 'string' && data.geoJsonString.trim().length > 0) {
+      resolvedGeojson = JSON.parse(data.geoJsonString);
+    } 
+    // 3. Fallback: if doc has raw geojson (e.g. simple 1D points)
+    else if (data.geojson && Array.isArray(data.geojson.features)) {
+      resolvedGeojson = data.geojson;
+    }
   } catch (err) {
-    console.warn('Error resolving layer chunks for layer:', layerData.id, err);
-    return layerData;
+    console.warn('Error reconstructing GeoJSON for layer:', data.id, err);
   }
+
+  const featureCount = resolvedGeojson.features ? resolvedGeojson.features.length : (data.featureCount || 0);
+
+  return {
+    id: data.id,
+    name: data.name || 'Capa Territorial',
+    filename: data.filename || 'capa.kmz',
+    category: data.category || 'general',
+    sector: data.sector || undefined,
+    threatType: data.threatType || 'Capa Territorial',
+    threatLevel: data.threatLevel || 'medio',
+    color: data.color || '#15803D',
+    opacity: typeof data.opacity === 'number' ? data.opacity : 0.85,
+    isVisible: data.isVisible !== false,
+    geojson: resolvedGeojson,
+    featureCount: featureCount,
+    bounds: data.bounds || undefined,
+    description: data.description || '',
+    uploadedBy: data.uploadedBy || 'anon',
+    uploadedByName: data.uploadedByName || 'Usuario Comunal',
+    createdAt: data.createdAt || Date.now(),
+    fileSize: data.fileSize || 0,
+    isChunked: data.isChunked,
+    totalChunks: data.totalChunks,
+    updatedAt: data.updatedAt,
+  };
 }
 
 /**
@@ -123,27 +195,17 @@ export async function deleteLayerFromFirestore(layerId: string, totalChunks?: nu
   }
 
   // Delete chunks if chunked
-  if (totalChunks && totalChunks > 0) {
-    for (let i = 0; i < totalChunks; i++) {
-      try {
+  const chunkCount = totalChunks && totalChunks > 0 ? totalChunks : 30;
+  for (let i = 0; i < chunkCount; i++) {
+    try {
+      const snap = await getDoc(doc(db, 'layer_chunks', `${layerId}_chunk_${i}`));
+      if (snap.exists()) {
         await deleteDoc(doc(db, 'layer_chunks', `${layerId}_chunk_${i}`));
-      } catch {
-        // ignore
-      }
-    }
-  } else {
-    // Attempt deleting potential chunks up to 20
-    for (let i = 0; i < 20; i++) {
-      try {
-        const snap = await getDoc(doc(db, 'layer_chunks', `${layerId}_chunk_${i}`));
-        if (snap.exists()) {
-          await deleteDoc(doc(db, 'layer_chunks', `${layerId}_chunk_${i}`));
-        } else {
-          break;
-        }
-      } catch {
+      } else if (!totalChunks) {
         break;
       }
+    } catch {
+      // ignore
     }
   }
 }

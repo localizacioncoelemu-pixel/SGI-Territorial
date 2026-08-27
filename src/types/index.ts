@@ -90,6 +90,7 @@ export interface KmzLayer {
   fileSize?: number;
   isChunked?: boolean;
   totalChunks?: number;
+  geoJsonString?: string;
   updatedAt?: number;
 }
 

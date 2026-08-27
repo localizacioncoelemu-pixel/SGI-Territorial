@@ -52,6 +52,7 @@ interface DataContextType {
   updateLayer: (id: string, updates: Partial<KmzLayer>) => Promise<void>;
   toggleLayerVisibility: (id: string) => Promise<void>;
   deleteLayer: (id: string) => Promise<void>;
+  syncAllLayersToCloud: () => Promise<number>;
   addRiskPoint: (pointData: Omit<RiskPoint, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'createdByName'>) => Promise<string>;
   updateRiskPoint: (id: string, updates: Partial<RiskPoint>) => Promise<void>;
   deleteRiskPoint: (id: string) => Promise<void>;
@@ -128,9 +129,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Load from IndexedDB on initial mount
+  // Load from IndexedDB on initial mount and ensure any local layers are synced with Firestore
   useEffect(() => {
-    getAllLayersFromLocalDB().then((storedLayers) => {
+    getAllLayersFromLocalDB().then(async (storedLayers) => {
       if (storedLayers && storedLayers.length > 0) {
         setLayers((prev) => {
           // Merge stored with existing
@@ -141,6 +142,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           return Array.from(map.values());
         });
+
+        // Automatically sync any valid user layers to Firestore so other devices get them
+        for (const localLayer of storedLayers) {
+          if (
+            localLayer && 
+            localLayer.id && 
+            !localLayer.id.startsWith('layer_incendios_') && 
+            !localLayer.id.startsWith('layer_inundacion_') && 
+            !localLayer.id.startsWith('layer_evacuacion_') && 
+            !localLayer.id.startsWith('layer_albergues_') && 
+            localLayer.uploadedBy !== 'system'
+          ) {
+            saveLayerToFirestore(localLayer).catch((err) => {
+              console.warn('Auto-sync layer to Firestore background note:', err);
+            });
+          }
+        }
       }
     }).catch((err) => {
       console.warn('Initial IndexedDB load error:', err);
@@ -173,9 +191,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const layersCol = collection(db, 'layers');
       unsubLayers = onSnapshot(layersCol, async (snapshot) => {
-        const rawFirestoreLayers: KmzLayer[] = [];
+        const rawFirestoreLayers: any[] = [];
         snapshot.forEach((d) => {
-          const layerData = d.data() as KmzLayer;
+          const layerData = d.data();
           // Only include user-created layers, discard legacy demo data
           if (
             layerData &&
@@ -189,7 +207,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         });
 
-        // Resolve chunked layers if any
+        // Resolve chunked layers or stringified GeoJSON
         const resolvedLayers: KmzLayer[] = await Promise.all(
           rawFirestoreLayers.map((l) => resolveFullLayerFromFirestore(l))
         );
@@ -203,7 +221,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsSyncing(false);
         setLastSyncTime(Date.now());
       }, (err) => {
-        console.warn('Firestore layers onSnapshot:', err);
+        console.warn('Firestore layers onSnapshot error:', err);
         setIsSyncing(false);
       });
     } catch (err) {
@@ -226,7 +244,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsSyncing(false);
         setLastSyncTime(Date.now());
       }, (err) => {
-        console.warn('Firestore points onSnapshot:', err);
+        console.warn('Firestore points onSnapshot error:', err);
         setIsSyncing(false);
       });
     } catch (err) {
@@ -255,11 +273,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('LocalDB layer save warning:', dbErr);
     }
 
-    // 3. Sync to Firestore in background using chunked storage if needed
+    // 3. Sync to Firestore in cloud so all devices receive the layer
     try {
       await saveLayerToFirestore(sanitized);
     } catch (err: any) {
-      console.warn('Layer synced locally (Firestore cloud sync note):', err.message || err);
+      console.error('Error saving layer to Firestore:', err);
+      throw new Error(`Error al sincronizar con la nube Firestore: ${err.message || err}`);
     } finally {
       setIsSyncing(false);
       setLastSyncTime(Date.now());
@@ -325,6 +344,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await deleteLayerFromFirestore(id, targetLayer?.totalChunks);
     } catch (err) {
       console.warn('Firestore deleteLayer note:', err);
+    } finally {
+      setIsSyncing(false);
+      setLastSyncTime(Date.now());
+    }
+  };
+
+  /**
+   * Manually pushes all locally stored and active layers to Firestore cloud
+   */
+  const syncAllLayersToCloud = async (): Promise<number> => {
+    setIsSyncing(true);
+    let count = 0;
+    try {
+      // First get all local DB layers
+      const localLayers = await getAllLayersFromLocalDB();
+      const combined = new Map<string, KmzLayer>();
+      localLayers.forEach(l => combined.set(l.id, l));
+      layers.forEach(l => combined.set(l.id, l));
+
+      for (const layer of combined.values()) {
+        if (
+          layer && 
+          layer.id && 
+          !layer.id.startsWith('layer_incendios_') && 
+          !layer.id.startsWith('layer_inundacion_') && 
+          !layer.id.startsWith('layer_evacuacion_') && 
+          !layer.id.startsWith('layer_albergues_') && 
+          layer.uploadedBy !== 'system'
+        ) {
+          await saveLayerToFirestore(layer);
+          count++;
+        }
+      }
+      return count;
     } finally {
       setIsSyncing(false);
       setLastSyncTime(Date.now());
@@ -643,6 +696,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateLayer,
         toggleLayerVisibility,
         deleteLayer,
+        syncAllLayersToCloud,
         addRiskPoint,
         updateRiskPoint,
         deleteRiskPoint,
