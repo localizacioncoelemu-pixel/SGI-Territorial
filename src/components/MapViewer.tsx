@@ -184,38 +184,136 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
   }, [mapFlyTo, setMapFlyTo]);
 
-  // Render Vector KMZ Layers (e.g. Sector Caravanchel, etc.)
+  // Helper: Checks if an individual feature or layer matches the selected sectors
+  const doesKmzFeatureMatchSectors = (feature: any, kmzLayer: KmzLayer, selectedSectors: string[]): boolean => {
+    if (!selectedSectors || selectedSectors.length === 0) return true;
+
+    const normalizedSectors = selectedSectors.map(s => s.trim().toLowerCase());
+    const props = feature?.properties || {};
+
+    const featSector = (props.sector || '').toString().trim().toLowerCase();
+    const featName = (props.name || '').toString().trim().toLowerCase();
+    const featDesc = (props.description || '').toString().trim().toLowerCase();
+
+    // 1. Direct match on feature sector property
+    if (featSector && normalizedSectors.some(s => featSector === s || featSector.includes(s) || s.includes(featSector))) {
+      return true;
+    }
+
+    // 2. Direct match on feature name (e.g. "Caravanchel Punto 1" or "Placemark - Caravanchel")
+    if (featName && normalizedSectors.some(s => featName.includes(s) || s.includes(featName))) {
+      return true;
+    }
+
+    // 3. Match on feature description
+    if (featDesc && normalizedSectors.some(s => featDesc.includes(s))) {
+      return true;
+    }
+
+    // 4. Check layer-level attributes if feature doesn't have an explicit conflicting sector
+    const layerSector = (kmzLayer.sector || '').toString().trim().toLowerCase();
+    const layerName = (kmzLayer.name || '').toString().trim().toLowerCase();
+    const layerFilename = (kmzLayer.filename || '').toString().trim().toLowerCase();
+
+    const layerMatches = normalizedSectors.some(s => 
+      (layerSector && (layerSector === s || layerSector.includes(s) || s.includes(layerSector))) ||
+      layerName.includes(s) ||
+      layerFilename.includes(s)
+    );
+
+    if (layerMatches) {
+      // If the layer matches the selected sector, but this feature explicitly belongs to another sector, exclude it
+      if (featSector && !normalizedSectors.some(s => featSector === s || featSector.includes(s) || s.includes(featSector))) {
+        return false;
+      }
+      return true;
+    }
+
+    return false;
+  };
+
+  // Helper: Checks if an individual KMZ feature should be rendered on the map based on current filter state
+  const isKmzFeatureVisible = (feature: any, kmzLayer: KmzLayer): boolean => {
+    const props = feature?.properties || {};
+
+    // A. Sector Filter (multi-selection)
+    if (filterState.selectedSectors.length > 0) {
+      if (!doesKmzFeatureMatchSectors(feature, kmzLayer, filterState.selectedSectors)) {
+        return false;
+      }
+    }
+
+    // B. Specific Category Filter (e.g. Incendios, Inundaciones, PMR)
+    if (filterState.activeSpecificCategory) {
+      const activeCat = filterState.activeSpecificCategory;
+      if (activeCat === 'pmr') {
+        const text = `${props.name || ''} ${props.description || ''}`.toLowerCase();
+        if (!text.includes('pmr') && !text.includes('movilidad') && !text.includes('discapacidad') && !text.includes('reducida')) {
+          return false;
+        }
+      } else if (activeCat !== 'sectores') {
+        const featCat = props.category || kmzLayer.category;
+        if (featCat !== activeCat) {
+          return false;
+        }
+      }
+    } else if (filterState.categories.length > 0) {
+      const featCat = props.category || kmzLayer.category;
+      if (!filterState.categories.includes(featCat) && !filterState.categories.includes('sectores')) {
+        return false;
+      }
+    }
+
+    // C. Threat Severity Level Filter
+    if (filterState.threatLevels.length > 0) {
+      const featLevel = props.threatLevel || kmzLayer.threatLevel;
+      if (!filterState.threatLevels.includes(featLevel)) {
+        return false;
+      }
+    }
+
+    // D. Only Critical Filter
+    if (filterState.onlyCritical) {
+      const featLevel = props.threatLevel || kmzLayer.threatLevel;
+      if (featLevel !== 'critico' && featLevel !== 'alto') {
+        return false;
+      }
+    }
+
+    // E. Search Keyword Filter
+    if (filterState.searchKeyword.trim()) {
+      const kw = filterState.searchKeyword.toLowerCase();
+      const featName = (props.name || '').toLowerCase();
+      const featDesc = (props.description || '').toLowerCase();
+      const featSector = (props.sector || kmzLayer.sector || '').toLowerCase();
+      const layerName = (kmzLayer.name || '').toLowerCase();
+      if (!featName.includes(kw) && !featDesc.includes(kw) && !featSector.includes(kw) && !layerName.includes(kw)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  // Render Vector KMZ Layers with per-feature filtering
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Clear old GeoJSON layers not in current filtered list
-    geojsonLayersRef.current.forEach((layer, id) => {
-      const stillExists = filteredLayers.some(l => l.id === id && l.isVisible);
-      if (!stillExists) {
-        map.removeLayer(layer);
-        geojsonLayersRef.current.delete(id);
-      }
+    // 1. Fully purge existing Leaflet GeoJSON layers so no stale features/polygons remain
+    geojsonLayersRef.current.forEach((layer) => {
+      map.removeLayer(layer);
     });
+    geojsonLayersRef.current.clear();
 
-    // Add or update active layers
+    // 2. Add only active, visible layers whose features pass the active filters
     filteredLayers.forEach((kmzLayer) => {
-      if (!kmzLayer.isVisible) {
-        const existing = geojsonLayersRef.current.get(kmzLayer.id);
-        if (existing) {
-          map.removeLayer(existing);
-          geojsonLayersRef.current.delete(kmzLayer.id);
-        }
-        return;
-      }
-
-      if (geojsonLayersRef.current.has(kmzLayer.id)) {
-        return;
-      }
+      if (!kmzLayer.isVisible) return;
 
       const layerSector = kmzLayer.sector || (kmzLayer.name.toLowerCase().includes('caravanchel') ? 'Caravanchel' : kmzLayer.name);
 
       const geoJsonLayer = L.geoJSON(kmzLayer.geojson as any, {
+        filter: (feature) => isKmzFeatureVisible(feature, kmzLayer),
         style: (feature) => {
           const custom = feature?.properties?.style || {};
           return {
@@ -227,7 +325,11 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           };
         },
         pointToLayer: (feature, latlng) => {
-          const icon = createHazardPointIcon(kmzLayer.category, kmzLayer.threatLevel, kmzLayer.color);
+          const props = feature?.properties || {};
+          const cat = props.category || kmzLayer.category;
+          const level = props.threatLevel || kmzLayer.threatLevel;
+          const customColor = props.style?.color || kmzLayer.color;
+          const icon = createHazardPointIcon(cat, level, customColor);
           return L.marker(latlng, { icon });
         },
         onEachFeature: (feature, layer) => {
@@ -254,7 +356,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           }
 
           const safeTitle = escapeHtml(title).replace(/'/g, "\\'");
-          const safeSector = escapeHtml(layerSector).replace(/'/g, "\\'");
+          const safeSector = escapeHtml(props.sector || layerSector).replace(/'/g, "\\'");
 
           const popupContent = `
             <div class="p-3 max-w-[290px] text-xs font-sans">
@@ -263,7 +365,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
               </div>
               <div class="flex items-center gap-1 mb-2">
                 <span class="px-2 py-0.5 rounded text-[10px] font-bold ${badge.bg} border">${badge.label}</span>
-                <span class="text-[10px] text-slate-600 font-semibold">Sector: ${escapeHtml(layerSector)}</span>
+                <span class="text-[10px] text-slate-600 font-semibold">Sector: ${escapeHtml(props.sector || layerSector)}</span>
               </div>
               <p class="text-slate-600 text-xs mb-2 leading-relaxed bg-slate-50 p-2 rounded border border-slate-100">${escapeHtml(desc)}</p>
               
@@ -286,10 +388,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         }
       });
 
-      geoJsonLayer.addTo(map);
-      geojsonLayersRef.current.set(kmzLayer.id, geoJsonLayer);
+      // Only mount the GeoJSON layer if it has visible features for the active filters
+      if (geoJsonLayer.getLayers().length > 0) {
+        geoJsonLayer.addTo(map);
+        geojsonLayersRef.current.set(kmzLayer.id, geoJsonLayer);
+      }
     });
-  }, [filteredLayers]);
+  }, [filteredLayers, filterState]);
 
   // Render Georeferenced Evaluated Risk Points
   useEffect(() => {

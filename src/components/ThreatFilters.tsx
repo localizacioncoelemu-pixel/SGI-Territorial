@@ -28,7 +28,8 @@ export const ThreatFilters: React.FC = () => {
     riskPoints, 
     deleteRiskPointsBySector, 
     deleteAllRiskPoints,
-    deleteAllLayers
+    deleteAllLayers,
+    setMapFlyTo
   } = useData();
   const { isAdmin } = useAuth();
   const [expanded, setExpanded] = useState(false);
@@ -136,11 +137,31 @@ export const ThreatFilters: React.FC = () => {
   const toggleSector = (sectorName: string) => {
     setFilterState((prev) => {
       const exists = prev.selectedSectors.includes(sectorName);
+      const newSectors = exists
+        ? prev.selectedSectors.filter((s) => s !== sectorName)
+        : [...prev.selectedSectors, sectorName];
+
+      if (!exists) {
+        // Find center for this sector and fly to it
+        const s = sectorName.toLowerCase().trim();
+        const pt = riskPoints.find(p => (p.sector || '').toLowerCase().trim().includes(s) || p.title.toLowerCase().trim().includes(s));
+        if (pt) {
+          setMapFlyTo({ lat: pt.coordinates.lat, lng: pt.coordinates.lng, zoom: 16 });
+        } else {
+          const l = layers.find(l => (l.sector || '').toLowerCase().trim().includes(s) || l.name.toLowerCase().trim().includes(s));
+          if (l && l.bounds) {
+            setMapFlyTo({
+              lat: (l.bounds[0] + l.bounds[2]) / 2,
+              lng: (l.bounds[1] + l.bounds[3]) / 2,
+              zoom: 15,
+            });
+          }
+        }
+      }
+
       return {
         ...prev,
-        selectedSectors: exists
-          ? prev.selectedSectors.filter((s) => s !== sectorName)
-          : [...prev.selectedSectors, sectorName],
+        selectedSectors: newSectors,
       };
     });
   };
