@@ -94,7 +94,7 @@ export async function getAllLayersFromLocalDB(): Promise<KmzLayer[]> {
 export async function deleteLayerFromLocalDB(layerId: string): Promise<void> {
   try {
     const db = await openDatabase();
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.delete(layerId);
@@ -104,13 +104,66 @@ export async function deleteLayerFromLocalDB(layerId: string): Promise<void> {
     });
   } catch (err) {
     console.warn('Error deleting layer from IndexedDB:', err);
-    try {
-      const existing = getLayersFromLocalStorage();
-      const filtered = existing.filter((l) => l.id !== layerId);
-      localStorage.setItem('sig_cached_layers', JSON.stringify(filtered));
-    } catch {
-      // ignore
+  }
+
+  try {
+    const existing = getLayersFromLocalStorage();
+    const filtered = existing.filter((l) => l.id !== layerId);
+    localStorage.setItem('sig_cached_layers', JSON.stringify(filtered));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Synchronizes local IndexedDB and LocalStorage with the exact list of active layers
+ * from Firestore. Deletes any cached layers that were removed from the cloud so they
+ * never resurrect or linger on other devices.
+ */
+export async function syncLocalDBWithFirestoreLayers(activeLayers: KmzLayer[]): Promise<void> {
+  const activeIds = new Set(activeLayers.map((l) => l.id));
+
+  // 1. Purge removed layers from IndexedDB
+  try {
+    const db = await openDatabase();
+    const stored = await new Promise<KmzLayer[]>((resolve) => {
+      const transaction = db.transaction([STORE_NAME], 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => resolve([]);
+    });
+
+    if (stored.length > 0) {
+      const deletePromises = stored
+        .filter((l) => !activeIds.has(l.id))
+        .map((l) => {
+          return new Promise<void>((resolve) => {
+            const tx = db.transaction([STORE_NAME], 'readwrite');
+            const st = tx.objectStore(STORE_NAME);
+            const req = st.delete(l.id);
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+          });
+        });
+      await Promise.all(deletePromises);
     }
+
+    // 2. Put active layers in IndexedDB
+    for (const layer of activeLayers) {
+      const tx = db.transaction([STORE_NAME], 'readwrite');
+      const st = tx.objectStore(STORE_NAME);
+      st.put(layer);
+    }
+  } catch (err) {
+    console.warn('IndexedDB sync note:', err);
+  }
+
+  // 3. Keep localStorage clean and synchronized
+  try {
+    localStorage.setItem('sig_cached_layers', JSON.stringify(activeLayers));
+  } catch {
+    // ignore
   }
 }
 

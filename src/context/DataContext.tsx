@@ -22,6 +22,7 @@ import {
   getAllLayersFromLocalDB, 
   deleteLayerFromLocalDB, 
   clearAllLocalLayers,
+  syncLocalDBWithFirestoreLayers,
   sanitizeForFirestore 
 } from '../services/layerStorage';
 import {
@@ -129,51 +130,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Load from IndexedDB on initial mount and ensure any local layers are synced with Firestore
+  // Load from IndexedDB on initial mount for instant offline preview (without re-uploading)
   useEffect(() => {
-    getAllLayersFromLocalDB().then(async (storedLayers) => {
+    getAllLayersFromLocalDB().then((storedLayers) => {
       if (storedLayers && storedLayers.length > 0) {
         setLayers((prev) => {
-          // Merge stored with existing
-          const map = new Map<string, KmzLayer>();
-          storedLayers.forEach((l) => map.set(l.id, l));
-          prev.forEach((l) => {
-            if (!map.has(l.id)) map.set(l.id, l);
-          });
-          return Array.from(map.values());
+          if (prev.length > 0) return prev; // If Firestore snapshot already arrived, respect cloud
+          const valid = storedLayers.filter(
+            (l) => l && l.id && !l.id.startsWith('layer_incendios_') && l.uploadedBy !== 'system'
+          );
+          return valid;
         });
-
-        // Automatically sync any valid user layers to Firestore so other devices get them
-        for (const localLayer of storedLayers) {
-          if (
-            localLayer && 
-            localLayer.id && 
-            !localLayer.id.startsWith('layer_incendios_') && 
-            !localLayer.id.startsWith('layer_inundacion_') && 
-            !localLayer.id.startsWith('layer_evacuacion_') && 
-            !localLayer.id.startsWith('layer_albergues_') && 
-            localLayer.uploadedBy !== 'system'
-          ) {
-            saveLayerToFirestore(localLayer).catch((err) => {
-              console.warn('Auto-sync layer to Firestore background note:', err);
-            });
-          }
-        }
       }
     }).catch((err) => {
       console.warn('Initial IndexedDB load error:', err);
     });
   }, []);
 
-  // Sync to local storage / IndexedDB whenever data updates
-  useEffect(() => {
-    try {
-      localStorage.setItem('sig_cached_layers', JSON.stringify(layers));
-    } catch (e) {
-      console.warn('LocalStorage layers cache quota warning:', e);
-    }
-  }, [layers]);
-
+  // Sync to local storage whenever riskPoints update
   useEffect(() => {
     try {
       localStorage.setItem('sig_cached_points', JSON.stringify(riskPoints));
@@ -212,10 +186,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           rawFirestoreLayers.map((l) => resolveFullLayerFromFirestore(l))
         );
 
-        // Update local DB cache for offline/instant availability
-        for (const l of resolvedLayers) {
-          saveLayerToLocalDB(l).catch(() => {});
-        }
+        // Synchronize local IndexedDB and LocalStorage so deleted layers are cleanly purged
+        syncLocalDBWithFirestoreLayers(resolvedLayers).catch((err) => {
+          console.warn('Local DB sync error in onSnapshot:', err);
+        });
         
         setLayers(resolvedLayers);
         setIsSyncing(false);
