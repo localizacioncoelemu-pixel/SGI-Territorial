@@ -103,8 +103,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               Puntos de Riesgo ({filteredRiskPoints.length})
             </button>
 
-            {/* Admin-only Add Point button */}
-            {isAdmin && (
+            {/* Add Point button - accessible to all authenticated users (both admin and usuario) */}
+            {user && (
               <button
                 id="btn-nav-add-point"
                 onClick={onOpenAddPoint}
@@ -325,7 +325,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <AlertTriangle className="w-4 h-4 text-amber-400" />
               Puntos de Riesgo
             </button>
-            {isAdmin && (
+            {user && (
               <button
                 onClick={() => { onOpenAddPoint(); setMobileMenuOpen(false); }}
                 className="p-2.5 rounded-lg bg-emerald-600 text-white font-semibold flex items-center gap-2"

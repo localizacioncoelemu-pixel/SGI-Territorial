@@ -52,9 +52,8 @@ function MainApp() {
     return <LoginPage />;
   }
 
-  // Handle clicking on map or KMZ Placemark to add/evaluate point (Admin only)
+  // Handle clicking on map or KMZ Placemark to add/evaluate point (accessible to both Admin and Usuario)
   const handleMapClick = (coords: { lat: number; lng: number }, defaultTitle?: string, defaultSector?: string) => {
-    if (!isAdmin) return;
     setSelectedCoordsForNewPoint(coords);
     setDefaultTitleForNewPoint(defaultTitle);
     setDefaultSectorForNewPoint(defaultSector);
@@ -63,6 +62,8 @@ function MainApp() {
   };
 
   const handleEditPoint = (point: RiskPoint) => {
+    // Role 'usuario' cannot modify or delete existing points; only admin can edit
+    if (!isAdmin) return;
     setEditingPoint(point);
     setSelectedCoordsForNewPoint(null);
     setDefaultTitleForNewPoint(undefined);
@@ -71,7 +72,7 @@ function MainApp() {
   };
 
   const handleOpenNewPointManual = () => {
-    if (!isAdmin) return;
+    // Both admin and usuario can add new points
     setSelectedCoordsForNewPoint(null);
     setDefaultTitleForNewPoint(undefined);
     setDefaultSectorForNewPoint(undefined);
@@ -89,7 +90,9 @@ function MainApp() {
         onOpenAddPoint={handleOpenNewPointManual}
         onOpenUsers={() => setUsersModalOpen(true)}
         onOpenReport={() => setReportModalOpen(true)}
-        onOpenExcel={() => setExcelModalOpen(true)}
+        onOpenExcel={() => {
+          if (isAdmin) setExcelModalOpen(true);
+        }}
         onOpenAuth={() => setAuthModalOpen(true)}
         onOpenInstallApp={() => setInstallModalOpen(true)}
         activeViewTab={activeViewTab}
@@ -107,17 +110,15 @@ function MainApp() {
           onOpenExcelExport={isAdmin ? () => setExcelModalOpen(true) : undefined}
         />
 
-        {/* Floating Action Button for Mobile Point Creation (Admin only) */}
-        {isAdmin && (
-          <button
-            id="btn-fab-add-point"
-            onClick={handleOpenNewPointManual}
-            className="md:hidden absolute bottom-20 right-4 z-30 w-12 h-12 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl flex items-center justify-center border-2 border-white active:scale-95 transition-transform cursor-pointer"
-            title="Agregar punto georreferenciado"
-          >
-            <Plus className="w-6 h-6" />
-          </button>
-        )}
+        {/* Floating Action Button for Mobile Point Creation (accessible to both Admin and Usuario) */}
+        <button
+          id="btn-fab-add-point"
+          onClick={handleOpenNewPointManual}
+          className="md:hidden absolute bottom-20 right-4 z-30 w-12 h-12 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl flex items-center justify-center border-2 border-white active:scale-95 transition-transform cursor-pointer"
+          title="Agregar punto georreferenciado"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
 
         {/* Floating Quick Drawer Toggles on Left bottom for mobile */}
         <div className="md:hidden absolute bottom-20 left-4 z-30 flex items-center gap-2">

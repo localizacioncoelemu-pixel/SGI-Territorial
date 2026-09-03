@@ -102,6 +102,7 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
 
   // Determine active sector default based on filter selection
   const selectedFilterSectors = filterState.selectedSectors;
+  const isReadOnly = Boolean(editingPoint && !isAdmin);
 
   // Populate form on open
   useEffect(() => {
@@ -284,6 +285,11 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
       };
 
       if (editingPoint) {
+        if (!isAdmin) {
+          setFormError('Permisos insuficientes: El rol de usuario solo puede agregar puntos nuevos, no modificar puntos ya ingresados.');
+          setIsSaving(false);
+          return;
+        }
         await updateRiskPoint(editingPoint.id, payloadData);
       } else {
         await addRiskPoint(payloadData);
@@ -362,6 +368,16 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
           </div>
         )}
 
+        {/* Read-Only Notice Banner for Regular Users on Existing Points */}
+        {isReadOnly && (
+          <div className="bg-amber-50 border-b border-amber-200 px-5 py-2.5 flex items-center gap-2.5 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+            <span>
+              <strong>Modo Consulta (Rol Usuario):</strong> Tienes permiso para registrar nuevos puntos territoriales, pero la modificación y eliminación de puntos existentes está reservada para administradores.
+            </span>
+          </div>
+        )}
+
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
           
@@ -371,6 +387,8 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
               <span className="font-medium">{formError}</span>
             </div>
           )}
+
+          <fieldset disabled={isReadOnly} className="space-y-4">
 
           {/* Top Info Grid: Sector & Title */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
@@ -818,6 +836,7 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
               />
             </div>
           </div>
+          </fieldset>
 
           {/* Modal Footer Buttons */}
           <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
@@ -858,14 +877,20 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                disabled={isSaving || isDeleting}
-                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer text-xs"
-              >
-                <Save className="w-4 h-4" />
-                <span>{isSaving ? 'Guardando...' : (editingPoint ? 'Actualizar Evaluación' : 'Guardar Punto en Base de Datos')}</span>
-              </button>
+              {(!editingPoint || isAdmin) ? (
+                <button
+                  type="submit"
+                  disabled={isSaving || isDeleting}
+                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer text-xs"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isSaving ? 'Guardando...' : (editingPoint ? 'Actualizar Evaluación' : 'Guardar Punto en Base de Datos')}</span>
+                </button>
+              ) : (
+                <span className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-500 font-semibold text-xs border border-slate-200">
+                  Solo Lectura (Rol Usuario)
+                </span>
+              )}
             </div>
           </div>
 

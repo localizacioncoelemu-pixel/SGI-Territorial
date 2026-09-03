@@ -21,6 +21,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { DEFAULT_COMUNA_CENTER, DEFAULT_COMUNA_ZOOM } from '../services/initialData';
 import { BasemapType, KmzLayer, RiskPoint, ThreatCategory, ThreatLevel } from '../types';
 import { getCategoryLabel, getThreatLevelBadge } from '../services/kmzParser';
@@ -46,6 +47,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     filterState,
     deleteRiskPoint
   } = useData();
+  const { user, isAdmin } = useAuth();
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -65,6 +67,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     };
 
     (window as any).handleEditExistingPoint = (pointId: string) => {
+      if (!isAdmin) return;
       const point = filteredRiskPoints.find(p => p.id === pointId);
       if (point && onSelectPointDetail) {
         onSelectPointDetail(point);
@@ -72,6 +75,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     };
 
     (window as any).handleDeleteExistingPoint = async (pointId: string) => {
+      if (!isAdmin) return;
       if (confirm('¿Estás seguro de eliminar este punto de riesgo de la base de datos?')) {
         await deleteRiskPoint(pointId);
       }
@@ -82,7 +86,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       delete (window as any).handleEditExistingPoint;
       delete (window as any).handleDeleteExistingPoint;
     };
-  }, [onMapClickAddPoint, onSelectPointDetail, filteredRiskPoints, deleteRiskPoint]);
+  }, [onMapClickAddPoint, onSelectPointDetail, filteredRiskPoints, deleteRiskPoint, isAdmin]);
 
   // Initialize Map
   useEffect(() => {
@@ -188,7 +192,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const doesKmzFeatureMatchSectors = (feature: any, kmzLayer: KmzLayer, selectedSectors: string[]): boolean => {
     if (!selectedSectors || selectedSectors.length === 0) return true;
 
-    const normalizedSectors = selectedSectors.map(s => s.trim().toLowerCase());
+    const normalizedSectors = selectedSectors.map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (normalizedSectors.length === 0) return true;
+
     const props = feature?.properties || {};
 
     const featSector = (props.sector || '').toString().trim().toLowerCase();
@@ -196,17 +202,19 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const featDesc = (props.description || '').toString().trim().toLowerCase();
 
     // 1. Direct match on feature sector property
-    if (featSector && normalizedSectors.some(s => featSector === s || featSector.includes(s) || s.includes(featSector))) {
-      return true;
+    if (featSector) {
+      return normalizedSectors.some(s => featSector === s || featSector.includes(s) || (s.length >= 4 && s.includes(featSector)));
     }
 
-    // 2. Direct match on feature name (e.g. "Caravanchel Punto 1" or "Placemark - Caravanchel")
-    if (featName && normalizedSectors.some(s => featName.includes(s) || s.includes(featName))) {
-      return true;
+    // 2. Direct match on feature name (only if length >= 3 to avoid matching single letters or generic numbers)
+    if (featName && featName.length >= 3) {
+      if (normalizedSectors.some(s => featName === s || featName.includes(s) || (s.length >= 4 && featName.includes(s)))) {
+        return true;
+      }
     }
 
     // 3. Match on feature description
-    if (featDesc && normalizedSectors.some(s => featDesc.includes(s))) {
+    if (featDesc && normalizedSectors.some(s => featDesc.includes(s) || featDesc.includes(`sector ${s}`))) {
       return true;
     }
 
@@ -215,17 +223,21 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const layerName = (kmzLayer.name || '').toString().trim().toLowerCase();
     const layerFilename = (kmzLayer.filename || '').toString().trim().toLowerCase();
 
-    const layerMatches = normalizedSectors.some(s => 
-      (layerSector && (layerSector === s || layerSector.includes(s) || s.includes(layerSector))) ||
-      layerName.includes(s) ||
-      layerFilename.includes(s)
+    const layerSectorMatches = normalizedSectors.some(s => 
+      Boolean(layerSector && (layerSector === s || layerSector.includes(s) || (s.length >= 4 && s.includes(layerSector))))
     );
 
-    if (layerMatches) {
-      // If the layer matches the selected sector, but this feature explicitly belongs to another sector, exclude it
-      if (featSector && !normalizedSectors.some(s => featSector === s || featSector.includes(s) || s.includes(featSector))) {
-        return false;
-      }
+    if (layerSectorMatches) {
+      return true;
+    }
+
+    // If layer name matches a sector keyword explicitly
+    const layerNameMatches = normalizedSectors.some(s => 
+      (layerName && (layerName === s || layerName.includes(s))) ||
+      (layerFilename && (layerFilename === s || layerFilename.includes(s)))
+    );
+
+    if (layerNameMatches) {
       return true;
     }
 
@@ -401,33 +413,23 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Clear old markers not in filtered list
-    riskMarkersRef.current.forEach((marker, id) => {
-      const stillExists = filteredRiskPoints.some(p => p.id === id);
-      if (!stillExists) {
-        map.removeLayer(marker);
-        riskMarkersRef.current.delete(id);
-      }
+    // Purge all previous markers so unselected or filtered points are immediately removed
+    riskMarkersRef.current.forEach((marker) => {
+      map.removeLayer(marker);
     });
+    riskMarkersRef.current.clear();
 
-    // Add or update markers
+    // Add freshly filtered markers
     filteredRiskPoints.forEach((point) => {
-      let marker = riskMarkersRef.current.get(point.id);
       const icon = createRiskPointIcon(point, filterState.activeSpecificCategory, filterState.filterPmrOnly);
-
-      if (!marker) {
-        marker = L.marker([point.coordinates.lat, point.coordinates.lng], { icon });
+      const marker = L.marker([point.coordinates.lat, point.coordinates.lng], { icon });
         
-        marker.on('click', () => {
-          setSelectedPoint(point);
-        });
+      marker.on('click', () => {
+        setSelectedPoint(point);
+      });
 
-        marker.addTo(map);
-        riskMarkersRef.current.set(point.id, marker);
-      } else {
-        marker.setLatLng([point.coordinates.lat, point.coordinates.lng]);
-        marker.setIcon(icon);
-      }
+      marker.addTo(map);
+      riskMarkersRef.current.set(point.id, marker);
 
       // Detailed Multi-Hazard Badges
       const globalBadge = getThreatLevelBadge(point.riskLevel);
@@ -530,28 +532,34 @@ export const MapViewer: React.FC<MapViewerProps> = ({
               ${point.contactPhone ? `<span class="font-bold text-emerald-700">📞 ${escapeHtml(point.contactPhone)}</span>` : ''}
             </div>
 
-            <div class="flex items-center gap-1.5 mt-1">
-              <button
-                onclick="window.handleEditExistingPoint('${point.id}')"
-                class="flex-1 py-1.5 px-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
-              >
-                ✏️ Modificar
-              </button>
-              <button
-                onclick="window.handleDeleteExistingPoint('${point.id}')"
-                class="py-1.5 px-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer"
-                title="Eliminar este punto de la base de datos"
-              >
-                🗑️ Eliminar
-              </button>
-            </div>
+            ${isAdmin ? `
+              <div class="flex items-center gap-1.5 mt-1">
+                <button
+                  onclick="window.handleEditExistingPoint('${point.id}')"
+                  class="flex-1 py-1.5 px-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-all cursor-pointer"
+                >
+                  ✏️ Modificar
+                </button>
+                <button
+                  onclick="window.handleDeleteExistingPoint('${point.id}')"
+                  class="py-1.5 px-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer"
+                  title="Eliminar este punto de la base de datos"
+                >
+                  🗑️ Eliminar
+                </button>
+              </div>
+            ` : `
+              <div class="mt-1 py-1 px-2 rounded bg-slate-50 border border-slate-200 text-center text-[10px] text-slate-500 font-medium">
+                Punto ingresado • Modo consulta
+              </div>
+            `}
           </div>
         </div>
       `;
 
       marker.bindPopup(popupHtml, { maxWidth: 340 });
     });
-  }, [filteredRiskPoints, filterState.activeSpecificCategory, filterState.filterPmrOnly, setSelectedPoint, onSelectPointDetail]);
+  }, [filteredRiskPoints, filterState.activeSpecificCategory, filterState.filterPmrOnly, setSelectedPoint, onSelectPointDetail, isAdmin]);
 
   // GPS Geolocation Handler
   const handleGetGpsLocation = () => {

@@ -31,7 +31,7 @@ interface ExportReportModalProps {
 
 export const ExportReportModal: React.FC<ExportReportModalProps> = ({ isOpen, onClose }) => {
   const { layers, riskPoints } = useData();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const printRef = useRef<HTMLDivElement | null>(null);
 
   // Sector filter state: empty array means "All Sectors"
@@ -123,6 +123,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({ isOpen, on
   };
 
   const handleDownloadExcel = () => {
+    if (!isAdmin) return;
     exportPointsToExcel(displayedPoints, {
       filteredSectors: selectedSectors.length > 0 ? selectedSectors : undefined,
     });
@@ -156,14 +157,16 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({ isOpen, on
           </div>
           
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownloadExcel}
-              className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors border border-emerald-500/50 shadow-xs cursor-pointer"
-              title="Descargar base de datos filtrada en planilla Excel (.xlsx)"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Descargar Excel</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleDownloadExcel}
+                className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors border border-emerald-500/50 shadow-xs cursor-pointer"
+                title="Descargar base de datos filtrada en planilla Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Descargar Excel</span>
+              </button>
+            )}
             <button
               onClick={handlePrint}
               className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"

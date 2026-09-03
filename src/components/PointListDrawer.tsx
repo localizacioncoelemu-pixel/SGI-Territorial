@@ -119,7 +119,7 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
             + Nuevo Punto
           </button>
 
-          {onOpenExcel && (
+          {isAdmin && onOpenExcel && (
             <button
               onClick={onOpenExcel}
               className="py-1.5 px-3 bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-98 border border-emerald-600/60 cursor-pointer"
@@ -254,14 +254,16 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
                     >
                       <Maximize2 className="w-3 h-3 text-emerald-700" />
                     </button>
-                    <button
-                      onClick={() => onEditPoint(point)}
-                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      title="Editar y calificar riesgos"
-                    >
-                      <Edit3 className="w-3 h-3 text-slate-700" />
-                    </button>
-                    {(isAdmin || point.createdBy === user?.uid) && (
+                    {isAdmin && (
+                      <button
+                        onClick={() => onEditPoint(point)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                        title="Editar y calificar riesgos"
+                      >
+                        <Edit3 className="w-3 h-3 text-slate-700" />
+                      </button>
+                    )}
+                    {isAdmin && (
                       <button
                         onClick={() => {
                           if (confirm(`¿Eliminar punto "${point.title}"?`)) {
@@ -298,10 +300,10 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
         ) : (
           <span>Base de datos sincronizada</span>
         )}
-        {onOpenExcel && (
+        {isAdmin && onOpenExcel && (
           <button
             onClick={onOpenExcel}
-            className="text-emerald-700 hover:underline font-bold text-[11px] flex items-center gap-1"
+            className="text-emerald-700 hover:underline font-bold text-[11px] flex items-center gap-1 cursor-pointer"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
             Descargar en Excel

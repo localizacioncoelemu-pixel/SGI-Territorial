@@ -134,6 +134,36 @@ export const ThreatFilters: React.FC = () => {
     });
   };
 
+  const selectOnlySector = (sectorName: string) => {
+    setFilterState((prev) => {
+      const isOnlyThis = prev.selectedSectors.length === 1 && prev.selectedSectors[0] === sectorName;
+      const newSectors = isOnlyThis ? [] : [sectorName];
+
+      if (!isOnlyThis) {
+        // Find center for this sector and fly to it
+        const s = sectorName.toLowerCase().trim();
+        const pt = riskPoints.find(p => (p.sector || '').toLowerCase().trim().includes(s) || p.title.toLowerCase().trim().includes(s));
+        if (pt) {
+          setMapFlyTo({ lat: pt.coordinates.lat, lng: pt.coordinates.lng, zoom: 16 });
+        } else {
+          const l = layers.find(l => (l.sector || '').toLowerCase().trim().includes(s) || l.name.toLowerCase().trim().includes(s));
+          if (l && l.bounds) {
+            setMapFlyTo({
+              lat: (l.bounds[0] + l.bounds[2]) / 2,
+              lng: (l.bounds[1] + l.bounds[3]) / 2,
+              zoom: 15,
+            });
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        selectedSectors: newSectors,
+      };
+    });
+  };
+
   const toggleSector = (sectorName: string) => {
     setFilterState((prev) => {
       const exists = prev.selectedSectors.includes(sectorName);
@@ -314,7 +344,7 @@ export const ThreatFilters: React.FC = () => {
                         Sectores Territoriales ({availableSectors.length})
                       </h5>
                       <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                        Selecciona uno o varios sectores para filtrar
+                        Clic en un sector para aislarlo, o marca la casilla para ver varios
                       </p>
                     </div>
                     <button
@@ -388,26 +418,44 @@ export const ThreatFilters: React.FC = () => {
                     ) : (
                       availableSectors.map((sec) => {
                         const isSelected = filterState.selectedSectors.includes(sec);
+                        const isOnlyThis = filterState.selectedSectors.length === 1 && isSelected;
                         const isDeletingThis = isDeletingSector === sec;
                         return (
                           <div
                             key={sec}
                             className={`rounded-xl flex items-center justify-between transition-all border ${
                               isSelected
-                                ? 'bg-indigo-50 text-indigo-900 font-bold border-indigo-200 shadow-xs'
-                                : 'text-slate-700 hover:bg-slate-50 border-slate-100'
+                                ? 'bg-indigo-50 text-indigo-900 font-bold border-indigo-300 shadow-xs ring-1 ring-indigo-200'
+                                : 'text-slate-700 hover:bg-slate-50 border-slate-200'
                             }`}
                           >
+                            {/* Direct single sector focus */}
+                            <button
+                              type="button"
+                              onClick={() => selectOnlySector(sec)}
+                              className="flex-1 text-left px-3 py-2 flex items-center gap-2 cursor-pointer min-w-0"
+                              title="Ver únicamente este sector en el mapa"
+                            >
+                              <Home className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-600' : 'text-slate-400'}`} />
+                              <span className="truncate text-xs font-semibold">{sec}</span>
+                              {isOnlyThis && (
+                                <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
+                                  Aislado
+                                </span>
+                              )}
+                            </button>
+
+                            {/* Checkbox for toggling in multi-selection */}
                             <button
                               type="button"
                               onClick={() => toggleSector(sec)}
-                              className="flex-1 text-left px-3 py-2.5 flex items-center justify-between cursor-pointer min-w-0"
+                              className="p-2 text-slate-400 hover:text-indigo-600 cursor-pointer flex-shrink-0"
+                              title={isSelected ? "Desactivar de selección múltiple" : "Agregar a selección múltiple"}
                             >
-                              <span className="truncate pr-2 font-medium">{sec}</span>
-                              <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+                              <div className={`w-4 h-4 rounded flex items-center justify-center transition-colors ${
                                 isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-300 bg-white'
                               }`}>
-                                {isSelected && <Check className="w-3.5 h-3.5" />}
+                                {isSelected && <Check className="w-3 h-3" />}
                               </div>
                             </button>
 
@@ -426,7 +474,7 @@ export const ThreatFilters: React.FC = () => {
                                     }
                                   }
                                 }}
-                                className="px-2.5 py-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-r-xl transition-colors cursor-pointer flex-shrink-0"
+                                className="px-2.5 py-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-r-xl transition-colors cursor-pointer flex-shrink-0"
                                 title={`Eliminar sector "${sec}" y todos sus puntos`}
                               >
                                 <Trash2 className={`w-3.5 h-3.5 ${isDeletingThis ? 'animate-spin text-red-600' : ''}`} />

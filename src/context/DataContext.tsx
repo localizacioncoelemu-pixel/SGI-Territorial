@@ -608,6 +608,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Filtered Layers and Risk Points computation
   const filteredLayers = useMemo(() => {
     return layers.filter((layer) => {
+      // 0. Hidden layer check: If a layer is toggled off in visibility, it MUST NOT be displayed
+      if (!layer.isVisible) {
+        return false;
+      }
       // Layer ID filter
       if (filterState.selectedLayerIds.length > 0 && !filterState.selectedLayerIds.includes(layer.id)) {
         return false;
@@ -619,15 +623,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Sector filter (multi-selection of sectors e.g. ['Burca', 'Guarilihue'])
       if (filterState.selectedSectors.length > 0) {
         const matchesSector = filterState.selectedSectors.some((sec) => {
-          const s = sec.toLowerCase();
-          const layerSector = (layer.sector || '').toLowerCase();
-          const layerName = layer.name.toLowerCase();
-          const layerDesc = (layer.description || '').toLowerCase();
-          return layerSector.includes(s) || layerName.includes(s) || layerDesc.includes(s) ||
-            layer.geojson.features.some(f => 
-              (f.properties?.name || '').toLowerCase().includes(s) ||
-              (f.properties?.sector || '').toLowerCase().includes(s)
-            );
+          const s = sec.toLowerCase().trim();
+          if (!s) return false;
+          const layerSector = (layer.sector || '').toLowerCase().trim();
+          const layerName = layer.name.toLowerCase().trim();
+          const layerDesc = (layer.description || '').toLowerCase().trim();
+
+          const sectorMatches = Boolean(layerSector && (layerSector === s || layerSector.includes(s) || (s.length >= 4 && s.includes(layerSector))));
+          const nameMatches = Boolean(layerName === s || layerName.includes(s) || (s.length >= 4 && s.includes(layerName)));
+          const descMatches = Boolean(layerDesc && (layerDesc.includes(`sector ${s}`) || layerDesc.includes(s)));
+          const featMatches = layer.geojson.features.some(f => {
+            const fSec = (f.properties?.sector || '').toString().toLowerCase().trim();
+            const fName = (f.properties?.name || '').toString().toLowerCase().trim();
+            return Boolean((fSec && (fSec === s || fSec.includes(s))) ||
+                   (fName && (fName.includes(s) || (s.length >= 4 && fName === s))));
+          });
+
+          return sectorMatches || nameMatches || descMatches || featMatches;
         });
         if (!matchesSector) {
           return false;
@@ -661,7 +673,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [layers, filterState]);
 
   const filteredRiskPoints = useMemo(() => {
+    const visibleLayerIds = new Set(layers.filter(l => l.isVisible).map(l => l.id));
+    const selectedLayerIdSet = filterState.selectedLayerIds.length > 0 ? new Set(filterState.selectedLayerIds) : null;
+
     return riskPoints.filter((point) => {
+      // 0. If point belongs to a source KMZ layer that is toggled invisible, do NOT show it
+      if (point.sourceLayerId && !visibleLayerIds.has(point.sourceLayerId)) {
+        return false;
+      }
+
+      // 0.1 If user explicitly filtered by specific KMZ layers, only show points associated with those layers
+      if (selectedLayerIdSet) {
+        const pointBelongsToSelected = point.sourceLayerId && selectedLayerIdSet.has(point.sourceLayerId);
+        const pointMatchesSelectedLayerSector = layers.some(l => 
+          selectedLayerIdSet.has(l.id) && 
+          l.sector && 
+          point.sector && 
+          l.sector.trim().toLowerCase() === point.sector.trim().toLowerCase()
+        );
+        if (!pointBelongsToSelected && !pointMatchesSelectedLayerSector) {
+          return false;
+        }
+      }
+
       // 1. PMR (Movilidad Reducida) Filter
       if (filterState.filterPmrOnly) {
         const hasPmr = point.hasPmr || (typeof point.pmrCount === 'number' && point.pmrCount > 0);
@@ -722,10 +756,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 3. Sector filter (matches point sector or layer)
       if (filterState.selectedSectors.length > 0) {
         const matchesSector = filterState.selectedSectors.some((sec) => {
-          const s = sec.toLowerCase();
-          return (point.sector || '').toLowerCase().includes(s) ||
-                 point.title.toLowerCase().includes(s) ||
-                 (point.sourceLayerName || '').toLowerCase().includes(s);
+          const s = sec.toLowerCase().trim();
+          if (!s) return false;
+          const pSec = (point.sector || '').toLowerCase().trim();
+          const pTitle = point.title.toLowerCase().trim();
+          const pSrcLayer = (point.sourceLayerName || '').toLowerCase().trim();
+
+          // 1. Direct match on point.sector
+          if (pSec && (pSec === s || pSec.includes(s) || (s.length >= 4 && s.includes(pSec)))) {
+            return true;
+          }
+          // 2. Direct match on title if it explicitly contains the sector name
+          if (pTitle && (pTitle.includes(s) || pTitle.includes(`sector ${s}`))) {
+            return true;
+          }
+          // 3. Match on source layer name
+          if (pSrcLayer && (pSrcLayer === s || pSrcLayer.includes(s))) {
+            return true;
+          }
+          return false;
         });
         if (!matchesSector) {
           return false;
@@ -762,7 +811,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return true;
     });
-  }, [riskPoints, filterState]);
+  }, [riskPoints, layers, filterState]);
 
   return (
     <DataContext.Provider

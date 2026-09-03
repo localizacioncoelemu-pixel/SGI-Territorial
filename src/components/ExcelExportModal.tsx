@@ -15,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { exportPointsToExcel } from '../services/excelExport';
 import { getThreatLevelBadge } from '../services/kmzParser';
 import { ThreatLevel } from '../types';
@@ -29,6 +30,7 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   onClose,
 }) => {
   const { riskPoints, layers } = useData();
+  const { isAdmin } = useAuth();
   const [selectedSector, setSelectedSector] = useState<string>('all');
   const [isExporting, setIsExporting] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
     return riskPoints.filter(p => (p.sector || '').toLowerCase() === selectedSector.toLowerCase());
   }, [riskPoints, selectedSector]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isAdmin) return null;
 
   const handleExport = () => {
     setIsExporting(true);

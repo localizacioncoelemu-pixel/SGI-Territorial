@@ -144,7 +144,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
   };
 
   const handleConfirmDeleteLayer = async () => {
-    if (!layerToDelete) return;
+    if (!isAdmin || !layerToDelete) return;
     setIsDeleting(true);
     try {
       const layerName = layerToDelete.name;
@@ -188,6 +188,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
   };
 
   const handleStartEdit = (layer: KmzLayer) => {
+    if (!isAdmin) return;
     setEditingLayerId(layer.id);
     setEditSectorVal(layer.sector || '');
     setEditCategoryVal(layer.category);
@@ -195,6 +196,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
   };
 
   const handleSaveEdit = async (layerId: string) => {
+    if (!isAdmin) return;
     try {
       await updateLayer(layerId, {
         sector: editSectorVal.trim() || undefined,
@@ -565,10 +567,11 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                               <span className="text-[11px] text-slate-500 font-medium">Color:</span>
                               <input
                                 type="color"
+                                disabled={!isAdmin}
                                 value={layer.color}
                                 onChange={(e) => updateLayer(layer.id, { color: e.target.value })}
-                                className="w-6 h-6 rounded cursor-pointer border border-slate-300 p-0"
-                                title="Cambiar color de capa"
+                                className={`w-6 h-6 rounded border border-slate-300 p-0 ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+                                title={isAdmin ? "Cambiar color de capa" : "Solo el rol Administrador puede modificar capas"}
                               />
                             </div>
 
@@ -580,9 +583,11 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                                 min="0.1"
                                 max="1.0"
                                 step="0.05"
+                                disabled={!isAdmin}
                                 value={layer.opacity}
                                 onChange={(e) => updateLayer(layer.id, { opacity: parseFloat(e.target.value) })}
-                                className="w-16 accent-emerald-600 cursor-pointer"
+                                className={`w-16 accent-emerald-600 ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+                                title={isAdmin ? "Ajustar opacidad" : "Solo el rol Administrador puede modificar capas"}
                               />
                               <span className="text-[10px] text-slate-400 font-mono">
                                 {Math.round(layer.opacity * 100)}%
@@ -591,15 +596,17 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                           </div>
 
                           <div className="flex items-center gap-1.5 ml-auto">
-                            {/* Edit Sector/Category button */}
-                            <button
-                              onClick={() => handleStartEdit(layer)}
-                              className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-medium text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Editar sector o categoría de esta capa"
-                            >
-                              <Edit3 className="w-3 h-3 text-indigo-600" />
-                              <span>Editar Sector</span>
-                            </button>
+                            {/* Edit Sector/Category button (Admin only) */}
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleStartEdit(layer)}
+                                className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-medium text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                                title="Editar sector o categoría de esta capa"
+                              >
+                                <Edit3 className="w-3 h-3 text-indigo-600" />
+                                <span>Editar Sector</span>
+                              </button>
+                            )}
 
                             {/* Zoom to layer */}
                             <button
@@ -622,16 +629,18 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                               <Download className="w-3.5 h-3.5" />
                             </button>
 
-                            {/* Delete Layer Button */}
-                            <button
-                              id={`btn-delete-layer-${layer.id}`}
-                              onClick={() => setLayerToDelete(layer)}
-                              className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-medium text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Eliminar permanentemente esta capa"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                              <span>Eliminar</span>
-                            </button>
+                            {/* Delete Layer Button (Admin only) */}
+                            {isAdmin && (
+                              <button
+                                id={`btn-delete-layer-${layer.id}`}
+                                onClick={() => setLayerToDelete(layer)}
+                                className="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-medium text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                                title="Eliminar permanentemente esta capa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                <span>Eliminar</span>
+                              </button>
+                            )}
                           </div>
 
                         </div>
