@@ -17,7 +17,8 @@ import {
   Accessibility,
   Waves,
   AlertCircle,
-  Trash2
+  Trash2,
+  Layers
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -31,6 +32,8 @@ interface PointManagerModalProps {
   editingPoint?: RiskPoint | null;
   defaultSector?: string;
   defaultTitle?: string;
+  defaultLayerId?: string;
+  defaultLayerName?: string;
 }
 
 const HAZARD_LEVEL_OPTIONS: { id: ThreatLevel; label: string; bg: string; text: string; activeBg: string }[] = [
@@ -48,6 +51,8 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
   editingPoint,
   defaultSector,
   defaultTitle,
+  defaultLayerId,
+  defaultLayerName,
 }) => {
   const { addRiskPoint, updateRiskPoint, deleteRiskPoint, setMapFlyTo, layers, riskPoints, filterState } = useData();
   const { user, isAdmin } = useAuth();
@@ -55,6 +60,8 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
 
   const [title, setTitle] = useState('');
   const [sector, setSector] = useState('Caravanchel');
+  const [selectedLayerId, setSelectedLayerId] = useState<string>('');
+  const [selectedLayerName, setSelectedLayerName] = useState<string>('');
   const [category, setCategory] = useState<ThreatCategory>('sectores');
   const [riskLevel, setRiskLevel] = useState<ThreatLevel>('alto');
   const [status, setStatus] = useState<PointStatus>('activo');
@@ -109,6 +116,8 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
     if (editingPoint) {
       setTitle(editingPoint.title || '');
       setSector(editingPoint.sector || defaultSector || 'Caravanchel');
+      setSelectedLayerId(editingPoint.sourceLayerId || defaultLayerId || '');
+      setSelectedLayerName(editingPoint.sourceLayerName || defaultLayerName || '');
       setCategory(editingPoint.category || 'sectores');
       setRiskLevel(editingPoint.riskLevel || 'medio');
       setStatus(editingPoint.status || 'activo');
@@ -135,10 +144,19 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
     } else {
       // New point: Auto-assign single selected sector if exactly one is filtered
       let initialSector = defaultSector || '';
+      let initialLayerId = defaultLayerId || '';
+      let initialLayerName = defaultLayerName || '';
+
+      if (initialLayerId && !initialLayerName) {
+        const found = layers.find(l => l.id === initialLayerId);
+        if (found) {
+          initialLayerName = found.name;
+          if (!initialSector) initialSector = found.sector || found.name;
+        }
+      }
+
       if (!initialSector) {
-        if (selectedFilterSectors.length === 1) {
-          initialSector = selectedFilterSectors[0];
-        } else if (selectedFilterSectors.length > 1) {
+        if (selectedFilterSectors.length >= 1) {
           initialSector = selectedFilterSectors[0];
         } else if (existingSectors.length > 0) {
           initialSector = existingSectors[0];
@@ -146,6 +164,9 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
           initialSector = 'Caravanchel';
         }
       }
+
+      setSelectedLayerId(initialLayerId);
+      setSelectedLayerName(initialLayerName);
 
       if (initialCoords) {
         setTitle(defaultTitle || 'Punto de Terreno');
@@ -192,9 +213,36 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
       }
     }
     setFormError(null);
-  }, [editingPoint, initialCoords, isOpen, defaultSector, defaultTitle, selectedFilterSectors, existingSectors]);
+  }, [editingPoint, initialCoords, isOpen, defaultSector, defaultTitle, defaultLayerId, defaultLayerName, selectedFilterSectors, existingSectors, layers]);
 
   if (!isOpen) return null;
+
+  const handleKmzLayerChange = (layerId: string) => {
+    setSelectedLayerId(layerId);
+    if (!layerId) {
+      setSelectedLayerName('');
+      return;
+    }
+    const found = layers.find(l => l.id === layerId);
+    if (found) {
+      setSelectedLayerName(found.name);
+      if (found.sector) {
+        setSector(found.sector);
+      } else {
+        setSector(found.name);
+      }
+      // If coordinates are default/unset and layer has points, center to first feature
+      if (!initialCoords && !editingPoint && found.geojson?.features?.[0]) {
+        try {
+          const feat = found.geojson.features[0];
+          if (feat.geometry?.type === 'Point' && Array.isArray(feat.geometry.coordinates)) {
+            setLng(feat.geometry.coordinates[0].toFixed(6));
+            setLat(feat.geometry.coordinates[1].toFixed(6));
+          }
+        } catch {}
+      }
+    }
+  };
 
   const updateHazard = (hazardKey: keyof HazardEvaluation, level: ThreatLevel) => {
     const updated = { ...hazardEvaluations, [hazardKey]: level };
@@ -282,6 +330,8 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
         hasPmr: hasPmr,
         pmrCount: hasPmr && pmrCount ? parseInt(pmrCount, 10) : 0,
         pmrDetails: hasPmr ? pmrDetails.trim() : undefined,
+        sourceLayerId: selectedLayerId.trim() || undefined,
+        sourceLayerName: selectedLayerName.trim() || undefined,
       };
 
       if (editingPoint) {
@@ -390,47 +440,84 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
 
           <fieldset disabled={isReadOnly} className="space-y-4">
 
-          {/* Top Info Grid: Sector & Title */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
-            {/* Sector / Localidad */}
-            <div>
-              <label className="block font-bold text-slate-900 mb-1 flex items-center justify-between">
-                <span>Sector / Capa Activa <span className="text-red-500">*</span></span>
-                <span className="text-[10px] text-slate-500 font-normal">Capa de destino</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Nombre del sector (ej: Caravanchel)"
-                value={sector}
-                onChange={(e) => setSector(e.target.value)}
-                list="sectors-datalist"
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-              <datalist id="sectors-datalist">
-                {existingSectors.map(s => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-              {existingSectors.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1.5">
-                  <span className="text-[10px] text-slate-400">Sectores disponibles:</span>
-                  {existingSectors.slice(0, 5).map(s => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setSector(s)}
-                      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                        sector.toLowerCase() === s.toLowerCase() 
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold' 
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {s}
-                    </button>
+          {/* Top Info Grid: KMZ Layer, Sector & Title */}
+          <div className="bg-slate-50/90 p-3.5 rounded-xl border border-slate-200 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* KMZ Layer Selector */}
+              <div>
+                <label className="block font-bold text-slate-900 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Capa KMZ de Destino</span>
+                  </span>
+                  <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    {selectedLayerId ? 'Capa Asignada' : 'Seleccionar'}
+                  </span>
+                </label>
+                <select
+                  value={selectedLayerId}
+                  onChange={(e) => handleKmzLayerChange(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none text-xs"
+                >
+                  <option value="">-- Sin capa KMZ vinculada (Punto General) --</option>
+                  {layers.map(l => (
+                    <option key={l.id} value={l.id}>
+                      🗺️ {l.name} {l.sector ? `• Sector: ${l.sector}` : ''}
+                    </option>
                   ))}
-                </div>
-              )}
+                </select>
+                {selectedLayerName ? (
+                  <p className="text-[10px] text-emerald-800 mt-1 font-medium flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                    <span>Vinculado a capa: <strong>{selectedLayerName}</strong></span>
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Puedes asociar el punto a cualquiera de las capas KMZ cargadas.
+                  </p>
+                )}
+              </div>
+
+              {/* Sector / Localidad */}
+              <div>
+                <label className="block font-bold text-slate-900 mb-1 flex items-center justify-between">
+                  <span>Sector / Localidad <span className="text-red-500">*</span></span>
+                  <span className="text-[10px] text-slate-500 font-normal">Filtro territorial</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Nombre del sector (ej: Caravanchel)"
+                  value={sector}
+                  onChange={(e) => setSector(e.target.value)}
+                  list="sectors-datalist"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none text-xs"
+                />
+                <datalist id="sectors-datalist">
+                  {existingSectors.map(s => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+                {existingSectors.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    <span className="text-[10px] text-slate-400">Sectores:</span>
+                    {existingSectors.slice(0, 4).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setSector(s)}
+                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                          sector.toLowerCase() === s.toLowerCase() 
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold' 
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Point Name / Title */}
@@ -444,10 +531,10 @@ export const PointManagerModal: React.FC<PointManagerModalProps> = ({
                 placeholder="Ej: Vivienda Familia Muñoz / Acceso Quebrada / Punto 04"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none text-xs"
               />
               <p className="text-[10px] text-slate-500 mt-1">
-                Identificador que aparecerá en el mapa y en la planilla Excel y reportes PDF.
+                Identificador que aparecerá en el mapa territorial y en los informes técnicos.
               </p>
             </div>
           </div>

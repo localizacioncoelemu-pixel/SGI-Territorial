@@ -13,7 +13,7 @@ import { ExcelExportModal } from './components/ExcelExportModal';
 import { AuthModal } from './components/AuthModal';
 import { LoginPage } from './components/LoginPage';
 import { InstallPwaModal } from './components/InstallPwaModal';
-import { RiskPoint } from './types';
+import { RiskPoint, KmzLayer } from './types';
 import { Plus, Layers, MapPin, AlertTriangle, ShieldCheck, Flame, Smartphone, FileSpreadsheet, Loader2 } from 'lucide-react';
 
 function MainApp() {
@@ -35,6 +35,8 @@ function MainApp() {
   const [editingPoint, setEditingPoint] = useState<RiskPoint | null>(null);
   const [defaultSectorForNewPoint, setDefaultSectorForNewPoint] = useState<string | undefined>(undefined);
   const [defaultTitleForNewPoint, setDefaultTitleForNewPoint] = useState<string | undefined>(undefined);
+  const [defaultLayerIdForNewPoint, setDefaultLayerIdForNewPoint] = useState<string | undefined>(undefined);
+  const [defaultLayerNameForNewPoint, setDefaultLayerNameForNewPoint] = useState<string | undefined>(undefined);
   const [activeViewTab, setActiveViewTab] = useState<'map' | 'layers' | 'points'>('map');
 
   // If auth is loading, show clean loader
@@ -53,21 +55,51 @@ function MainApp() {
   }
 
   // Handle clicking on map or KMZ Placemark to add/evaluate point (accessible to both Admin and Usuario)
-  const handleMapClick = (coords: { lat: number; lng: number }, defaultTitle?: string, defaultSector?: string) => {
+  const handleMapClick = (
+    coords: { lat: number; lng: number },
+    defaultTitle?: string,
+    defaultSector?: string,
+    layerId?: string,
+    layerName?: string
+  ) => {
     setSelectedCoordsForNewPoint(coords);
     setDefaultTitleForNewPoint(defaultTitle);
     setDefaultSectorForNewPoint(defaultSector);
+    setDefaultLayerIdForNewPoint(layerId);
+    setDefaultLayerNameForNewPoint(layerName);
     setEditingPoint(null);
     setAddPointModalOpen(true);
   };
 
   const handleEditPoint = (point: RiskPoint) => {
-    // Role 'usuario' cannot modify or delete existing points; only admin can edit
-    if (!isAdmin) return;
+    // Non-admins can inspect the point in read-only mode, admins can edit
     setEditingPoint(point);
     setSelectedCoordsForNewPoint(null);
     setDefaultTitleForNewPoint(undefined);
     setDefaultSectorForNewPoint(undefined);
+    setDefaultLayerIdForNewPoint(point.sourceLayerId);
+    setDefaultLayerNameForNewPoint(point.sourceLayerName);
+    setAddPointModalOpen(true);
+  };
+
+  const handleAddPointToLayer = (layer: KmzLayer) => {
+    let lat = -36.4883;
+    let lng = -72.7031;
+    try {
+      const feat = layer.geojson?.features?.[0];
+      if (feat?.geometry?.type === 'Point' && Array.isArray(feat.geometry.coordinates)) {
+        lng = feat.geometry.coordinates[0];
+        lat = feat.geometry.coordinates[1];
+      }
+    } catch {}
+
+    setSelectedCoordsForNewPoint({ lat, lng });
+    setDefaultTitleForNewPoint(`Punto - ${layer.name}`);
+    setDefaultSectorForNewPoint(layer.sector || layer.name);
+    setDefaultLayerIdForNewPoint(layer.id);
+    setDefaultLayerNameForNewPoint(layer.name);
+    setEditingPoint(null);
+    setLayersModalOpen(false);
     setAddPointModalOpen(true);
   };
 
@@ -76,6 +108,8 @@ function MainApp() {
     setSelectedCoordsForNewPoint(null);
     setDefaultTitleForNewPoint(undefined);
     setDefaultSectorForNewPoint(undefined);
+    setDefaultLayerIdForNewPoint(undefined);
+    setDefaultLayerNameForNewPoint(undefined);
     setEditingPoint(null);
     setAddPointModalOpen(true);
   };
@@ -147,6 +181,7 @@ function MainApp() {
       <LayerManager
         isOpen={layersModalOpen}
         onClose={() => setLayersModalOpen(false)}
+        onAddPointToLayer={handleAddPointToLayer}
       />
 
       {/* Georeferenced Point Creation & Editing Modal with Multi-Hazard Assessment */}
@@ -158,11 +193,15 @@ function MainApp() {
           setEditingPoint(null);
           setDefaultTitleForNewPoint(undefined);
           setDefaultSectorForNewPoint(undefined);
+          setDefaultLayerIdForNewPoint(undefined);
+          setDefaultLayerNameForNewPoint(undefined);
         }}
         initialCoords={selectedCoordsForNewPoint}
         editingPoint={editingPoint}
         defaultSector={defaultSectorForNewPoint}
         defaultTitle={defaultTitleForNewPoint}
+        defaultLayerId={defaultLayerIdForNewPoint}
+        defaultLayerName={defaultLayerNameForNewPoint}
       />
 
       {/* Georeferenced Points List Side Drawer */}
@@ -176,7 +215,7 @@ function MainApp() {
 
       {/* Excel Database Export Modal (.xlsx) */}
       <ExcelExportModal
-        isOpen={excelModalOpen}
+        isOpen={excelModalOpen && isAdmin}
         onClose={() => setExcelModalOpen(false)}
       />
 

@@ -27,7 +27,7 @@ import { BasemapType, KmzLayer, RiskPoint, ThreatCategory, ThreatLevel } from '.
 import { getCategoryLabel, getThreatLevelBadge } from '../services/kmzParser';
 
 interface MapViewerProps {
-  onMapClickAddPoint?: (coords: { lat: number; lng: number }, defaultTitle?: string, defaultSector?: string) => void;
+  onMapClickAddPoint?: (coords: { lat: number; lng: number }, defaultTitle?: string, defaultSector?: string, layerId?: string, layerName?: string) => void;
   onSelectPointDetail?: (point: RiskPoint) => void;
   onOpenExcelExport?: () => void;
 }
@@ -60,14 +60,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   // Global window functions for popup click handling
   useEffect(() => {
-    (window as any).handleEvaluateKmzPoint = (name: string, sector: string, lat: number, lng: number) => {
+    (window as any).handleEvaluateKmzPoint = (name: string, sector: string, lat: number, lng: number, layerId?: string, layerName?: string) => {
       if (onMapClickAddPoint) {
-        onMapClickAddPoint({ lat, lng }, name, sector);
+        onMapClickAddPoint({ lat, lng }, name, sector, layerId, layerName);
       }
     };
 
     (window as any).handleEditExistingPoint = (pointId: string) => {
-      if (!isAdmin) return;
       const point = filteredRiskPoints.find(p => p.id === pointId);
       if (point && onSelectPointDetail) {
         onSelectPointDetail(point);
@@ -388,10 +387,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
                 </div>
                 
                 <button 
-                  onclick="window.handleEvaluateKmzPoint('${safeTitle}', '${safeSector}', ${lat}, ${lng})"
+                  onclick="window.handleEvaluateKmzPoint('${safeTitle}', '${safeSector}', ${lat}, ${lng}, '${escapeHtml(kmzLayer.id)}', '${escapeHtml(kmzLayer.name)}')"
                   class="w-full mt-1.5 py-1.5 px-3 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
                 >
-                  ✏️ Evaluar Riesgos de este Punto
+                  📍 Agregar Punto a esta Capa KMZ
                 </button>
               </div>
             </div>
@@ -549,8 +548,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
                 </button>
               </div>
             ` : `
-              <div class="mt-1 py-1 px-2 rounded bg-slate-50 border border-slate-200 text-center text-[10px] text-slate-500 font-medium">
-                Punto ingresado • Modo consulta
+              <div class="mt-1">
+                <button
+                  onclick="window.handleEditExistingPoint('${point.id}')"
+                  class="w-full py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer"
+                  title="Ver ficha técnica completa en modo lectura"
+                >
+                  👁️ Ver Detalle Completo (Modo Consulta)
+                </button>
               </div>
             `}
           </div>

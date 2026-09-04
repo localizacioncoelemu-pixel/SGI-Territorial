@@ -80,7 +80,7 @@ const initialFilterState: FilterState = {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   
   const [layers, setLayers] = useState<KmzLayer[]>(() => {
     const local = localStorage.getItem('sig_cached_layers');
@@ -502,6 +502,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateRiskPoint = async (id: string, updates: Partial<RiskPoint>) => {
+    if (!isAdmin) {
+      console.warn('Operación restringida: Solo el rol de Administrador puede editar puntos existentes.');
+      alert('Acceso restringido: Tu rol de Usuario te permite registrar puntos nuevos, pero no modificar puntos existentes.');
+      return;
+    }
     setIsSyncing(true);
     const updatedData = sanitizeForFirestore({ ...updates, updatedAt: Date.now() });
     setRiskPoints((prev) => prev.map((p) => p.id === id ? { ...p, ...updatedData } : p));
@@ -519,6 +524,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteRiskPoint = async (id: string) => {
+    if (!isAdmin) {
+      console.warn('Operación restringida: Solo el rol de Administrador puede eliminar puntos existentes.');
+      alert('Acceso restringido: Tu rol de Usuario no tiene permisos para eliminar puntos de la base de datos.');
+      return;
+    }
     setIsSyncing(true);
     setRiskPoints((prev) => prev.filter((p) => p.id !== id));
     if (selectedPoint?.id === id) setSelectedPoint(null);

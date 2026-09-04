@@ -26,21 +26,26 @@ import {
   Search,
   Edit3,
   Cloud,
-  CloudCheck
+  CloudCheck,
+  MapPin,
+  Loader2
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { parseKmzOrKmlFile, getCategoryLabel, getThreatLevelBadge, getDefaultCategoryColor } from '../services/kmzParser';
+import { exportLayerToKmzFile, exportMasterKmzBackup } from '../services/kmzExporter';
 import { KmzLayer, ThreatCategory, ThreatLevel } from '../types';
 
 interface LayerManagerProps {
   isOpen: boolean;
   onClose: () => void;
+  onAddPointToLayer?: (layer: KmzLayer) => void;
 }
 
-export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) => {
+export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose, onAddPointToLayer }) => {
   const { 
     layers, 
+    riskPoints,
     addLayer, 
     updateLayer, 
     toggleLayerVisibility, 
@@ -56,6 +61,8 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
   const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [exportingLayerId, setExportingLayerId] = useState<string | null>(null);
+  const [isExportingMaster, setIsExportingMaster] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'upload'>('list');
   const [isDragging, setIsDragging] = useState(false);
   const [layerToDelete, setLayerToDelete] = useState<KmzLayer | null>(null);
@@ -240,7 +247,30 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
     }
   };
 
+  const handleDownloadKMZ = async (layer: KmzLayer) => {
+    if (!isAdmin) {
+      alert('Acceso restringido: Solo los administradores tienen autorización para descargar capas y respaldos territoriales.');
+      return;
+    }
+    try {
+      setExportingLayerId(layer.id);
+      const res = await exportLayerToKmzFile(layer, riskPoints);
+      setUploadSuccess(`Capa "${layer.name}" descargada en formato KMZ. Se respaldaron ${res.pointCount} nuevos puntos georreferenciados.`);
+      setTimeout(() => setUploadSuccess(null), 4000);
+    } catch (err: any) {
+      console.error('Error al generar KMZ:', err);
+      setUploadError('No se pudo generar el archivo KMZ: ' + (err?.message || 'Error desconocido'));
+      setTimeout(() => setUploadError(null), 4000);
+    } finally {
+      setExportingLayerId(null);
+    }
+  };
+
   const handleDownloadGeoJSON = (layer: KmzLayer) => {
+    if (!isAdmin) {
+      alert('Acceso restringido: Solo los administradores tienen autorización para descargar capas territoriales.');
+      return;
+    }
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(layer.geojson, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
@@ -248,6 +278,29 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+  };
+
+  const handleDownloadMasterKMZ = async () => {
+    if (!isAdmin) {
+      alert('Acceso restringido: Solo los administradores pueden descargar el respaldo maestro territorial.');
+      return;
+    }
+    if (layers.length === 0 && riskPoints.length === 0) {
+      alert('No hay capas ni puntos disponibles para respaldar.');
+      return;
+    }
+    try {
+      setIsExportingMaster(true);
+      const res = await exportMasterKmzBackup(layers, riskPoints);
+      setUploadSuccess(`Copia de seguridad maestra KMZ generada con éxito (${res.layerCount} capas y ${res.pointCount} puntos de riesgo).`);
+      setTimeout(() => setUploadSuccess(null), 5000);
+    } catch (err: any) {
+      console.error('Error al generar respaldo maestro KMZ:', err);
+      setUploadError('No se pudo generar el archivo maestro KMZ: ' + (err?.message || 'Error desconocido'));
+      setTimeout(() => setUploadError(null), 5000);
+    } finally {
+      setIsExportingMaster(false);
+    }
   };
 
   return (
@@ -310,15 +363,34 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
           </div>
 
           {activeTab === 'list' && layers.length > 0 && (
-            <div className="relative w-48">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Buscar capa o sector..."
-                value={layerSearch}
-                onChange={(e) => setLayerSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <button
+                  id="btn-export-master-kmz"
+                  onClick={handleDownloadMasterKMZ}
+                  disabled={isExportingMaster}
+                  className="px-2.5 py-1.5 rounded-lg bg-emerald-800 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                  title="Descargar copia de seguridad completa con todas las capas y puntos de riesgo en formato KMZ para Google Earth"
+                >
+                  {isExportingMaster ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-emerald-300" />
+                  )}
+                  <span className="hidden sm:inline">Respaldar Todo</span> <span>KMZ</span>
+                </button>
+              )}
+
+              <div className="relative w-40 sm:w-48">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar capa o sector..."
+                  value={layerSearch}
+                  onChange={(e) => setLayerSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
             </div>
           )}
         </div>
@@ -596,6 +668,19 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                           </div>
 
                           <div className="flex items-center gap-1.5 ml-auto">
+                            {/* Add Point to this KMZ Layer (for BOTH Admin and Usuario) */}
+                            {onAddPointToLayer && (
+                              <button
+                                id={`btn-add-point-layer-${layer.id}`}
+                                onClick={() => onAddPointToLayer(layer)}
+                                className="px-2 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                title="Agregar un nuevo punto georreferenciado en esta capa KMZ"
+                              >
+                                <MapPin className="w-3 h-3 text-emerald-200" />
+                                <span>+ Punto</span>
+                              </button>
+                            )}
+
                             {/* Edit Sector/Category button (Admin only) */}
                             {isAdmin && (
                               <button
@@ -619,15 +704,36 @@ export const LayerManager: React.FC<LayerManagerProps> = ({ isOpen, onClose }) =
                               Centrar
                             </button>
 
-                            {/* Download GeoJSON */}
-                            <button
-                              id={`btn-download-${layer.id}`}
-                              onClick={() => handleDownloadGeoJSON(layer)}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer transition-colors"
-                              title="Descargar GeoJSON de la capa"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
+                            {/* Download Options (Admin Only) */}
+                            {isAdmin && (
+                              <div className="flex items-center gap-1 border-l border-slate-200 pl-1.5 ml-0.5">
+                                {/* Download KMZ with backed-up points */}
+                                <button
+                                  id={`btn-download-kmz-${layer.id}`}
+                                  onClick={() => handleDownloadKMZ(layer)}
+                                  disabled={exportingLayerId === layer.id}
+                                  className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
+                                  title="Descargar capa en formato KMZ (.kmz) respaldando los nuevos puntos georreferenciados para Google Earth"
+                                >
+                                  {exportingLayerId === layer.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin text-emerald-700" />
+                                  ) : (
+                                    <Download className="w-3 h-3 text-emerald-700" />
+                                  )}
+                                  <span>KMZ</span>
+                                </button>
+
+                                {/* Download GeoJSON */}
+                                <button
+                                  id={`btn-download-geojson-${layer.id}`}
+                                  onClick={() => handleDownloadGeoJSON(layer)}
+                                  className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 cursor-pointer transition-colors"
+                                  title="Descargar capa en formato GeoJSON (.geojson)"
+                                >
+                                  <span className="text-[10px] font-mono font-bold">JSON</span>
+                                </button>
+                              </div>
+                            )}
 
                             {/* Delete Layer Button (Admin only) */}
                             {isAdmin && (

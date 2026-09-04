@@ -19,12 +19,16 @@ import {
   ChevronRight,
   FileSpreadsheet,
   Search,
-  Filter
+  Filter,
+  Eye,
+  Download,
+  Loader2
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { RiskPoint, ThreatCategory, ThreatLevel } from '../types';
 import { getThreatLevelBadge } from '../services/kmzParser';
+import { exportPointsToKmzFile } from '../services/kmzExporter';
 
 interface PointListDrawerProps {
   isOpen: boolean;
@@ -53,8 +57,29 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
   const { user, isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
+  const [isExportingKmz, setIsExportingKmz] = useState(false);
 
   if (!isOpen) return null;
+
+  const handleExportPointsKmz = async () => {
+    if (!isAdmin) {
+      alert('Acceso restringido: Solo los administradores pueden descargar respaldos KMZ.');
+      return;
+    }
+    if (riskPoints.length === 0) {
+      alert('No hay puntos registrados para exportar.');
+      return;
+    }
+    try {
+      setIsExportingKmz(true);
+      await exportPointsToKmzFile(riskPoints);
+    } catch (err: any) {
+      console.error('Error al exportar puntos a KMZ:', err);
+      alert('No se pudo generar el archivo KMZ de puntos: ' + (err?.message || 'Error'));
+    } finally {
+      setIsExportingKmz(false);
+    }
+  };
 
   const handleSelectPoint = (point: RiskPoint) => {
     setSelectedPoint(point);
@@ -254,13 +279,21 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
                     >
                       <Maximize2 className="w-3 h-3 text-emerald-700" />
                     </button>
-                    {isAdmin && (
+                    {isAdmin ? (
                       <button
                         onClick={() => onEditPoint(point)}
                         className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
                         title="Editar y calificar riesgos"
                       >
                         <Edit3 className="w-3 h-3 text-slate-700" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onEditPoint(point)}
+                        className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                        title="Ver detalle de evaluación en modo lectura"
+                      >
+                        <Eye className="w-3 h-3 text-slate-700" />
                       </button>
                     )}
                     {isAdmin && (
@@ -300,14 +333,32 @@ export const PointListDrawer: React.FC<PointListDrawerProps> = ({
         ) : (
           <span>Base de datos sincronizada</span>
         )}
-        {isAdmin && onOpenExcel && (
-          <button
-            onClick={onOpenExcel}
-            className="text-emerald-700 hover:underline font-bold text-[11px] flex items-center gap-1 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            Descargar en Excel
-          </button>
+        {isAdmin && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleExportPointsKmz}
+              disabled={isExportingKmz || riskPoints.length === 0}
+              className="text-emerald-700 hover:text-emerald-800 hover:underline font-bold text-[11px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Descargar todos los puntos de riesgo en formato KMZ para Google Earth"
+            >
+              {isExportingKmz ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+              )}
+              <span>Descargar KMZ</span>
+            </button>
+
+            {onOpenExcel && (
+              <button
+                onClick={onOpenExcel}
+                className="text-emerald-700 hover:underline font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Descargar en Excel
+              </button>
+            )}
+          </div>
         )}
       </div>
 
